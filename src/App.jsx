@@ -13,9 +13,8 @@ function App() {
   const [scanError, setScanError] = useState(null);
   const terminalRef = useRef(null);
   
-  // Use relative path in prod (same server), but localhost:8000 in local dev
-  const API_BASE = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
-  const API_ENDPOINT = API_BASE ? `${API_BASE}/api/scan` : '/api/scan';
+  // Always use relative path — works in both dev (via Vite proxy) and prod (same-origin)
+  const API_ENDPOINT = '/api/scan';
 
   // Auto-scroll terminal when new logs arrive
   useEffect(() => {
