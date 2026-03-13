@@ -407,16 +407,176 @@
   }
 }
 
+/* ========== Tablet (≤ 768px) ========== */
 @media (max-width: 768px) {
+  .app-container {
+    padding: 1rem;
+  }
+
+  .header {
+    margin-bottom: 2rem;
+    padding-top: 1rem;
+  }
+
   .hero-title {
-    font-size: 2.5rem;
+    font-size: 2rem;
+    letter-spacing: -0.01em;
+  }
+
+  .hero-subtitle {
+    font-size: 1rem;
   }
 
   .action-center {
     padding: 1.5rem;
+    margin-bottom: 2rem;
+  }
+
+  .target-input {
+    font-size: 0.95rem;
+    padding: 1rem;
+  }
+
+  .scan-button {
+    padding: 1rem;
+    font-size: 1rem;
+    letter-spacing: 1px;
+  }
+
+  .scanner-terminal {
+    height: 200px;
+    padding: 1rem;
+    font-size: 0.8rem;
+  }
+
+  .log-time {
+    min-width: 70px;
+    font-size: 0.75rem;
+    margin-right: 0.5rem;
+  }
+
+  .results-dashboard {
+    padding: 1.5rem;
+  }
+
+  .results-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .results-title {
+    font-size: 1.2rem;
   }
 
   .results-grid {
     grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .result-card {
+    padding: 1rem;
+  }
+
+  .card-value {
+    font-size: 1.1rem;
+  }
+}
+
+/* ========== Phone (≤ 480px) ========== */
+@media (max-width: 480px) {
+  .app-container {
+    padding: 0.75rem;
+  }
+
+  .header {
+    margin-bottom: 1.5rem;
+    padding-top: 0.5rem;
+  }
+
+  .hero-title {
+    font-size: 1.5rem;
+    line-height: 1.2;
+  }
+
+  .hero-subtitle {
+    font-size: 0.85rem;
+    line-height: 1.4;
+  }
+
+  .action-center {
+    padding: 1rem;
+    border-radius: 8px;
+  }
+
+  .target-input {
+    font-size: 0.85rem;
+    padding: 0.85rem;
+  }
+
+  .disclaimer-group {
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .disclaimer-label {
+    font-size: 0.8rem;
+  }
+
+  .scan-button {
+    padding: 0.85rem;
+    font-size: 0.85rem;
+    letter-spacing: 1px;
+  }
+
+  .scanner-terminal {
+    height: 180px;
+    padding: 0.75rem;
+    font-size: 0.7rem;
+    margin-top: 1rem;
+  }
+
+  .log-line {
+    flex-direction: column;
+    margin-bottom: 0.75rem;
+  }
+
+  .log-time {
+    min-width: unset;
+    margin-right: 0;
+    margin-bottom: 0.15rem;
+    font-size: 0.65rem;
+  }
+
+  .log-text {
+    word-break: break-word;
+  }
+
+  .results-dashboard {
+    padding: 1rem;
+    margin-top: 1rem;
+  }
+
+  .results-title {
+    font-size: 1rem;
+    gap: 0.5rem;
+  }
+
+  .results-title svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .status-badge {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.5rem;
+  }
+
+  .card-label {
+    font-size: 0.75rem;
+  }
+
+  .card-value {
+    font-size: 1rem;
   }
 }
