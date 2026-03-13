@@ -9,6 +9,7 @@ function App() {
   const [scanState, setScanState] = useState('idle'); // 'idle' | 'scanning' | 'completed'
   const [logs, setLogs] = useState([]);
   const [scanResult, setScanResult] = useState(null);
+  const [scanError, setScanError] = useState(null);
   const terminalRef = useRef(null);
   
   // Use relative path in prod (same server), but localhost:8000 in local dev
@@ -34,6 +35,8 @@ function App() {
 
     setScanState('scanning');
     setLogs([]);
+    setScanError(null);
+    setScanResult(null);
 
     try {
       // 1. Fetch real logic/logs from the backend
@@ -76,13 +79,31 @@ function App() {
         }, 50); // 50ms per simulated log line for visual effect
 
       } else {
-        console.error("Scan error:", data.message);
-        setScanState('idle');
+        setScanError(data.message || 'Scan returned an error.');
+        setLogs(prev => [...prev, {
+          time: new Date().toISOString().split('T')[1].substring(0, 12),
+          text: `[ERROR] ${data.message || 'Unknown server error'}`,
+          type: 'danger'
+        }]);
+        setScanState('completed');
       }
     } catch (error) {
-      console.warn("Backend hook unfulfilled:", error);
-      setScanState('idle');
+      const errorMsg = error?.message || String(error);
+      setScanError(errorMsg);
+      setLogs(prev => [...prev, {
+        time: new Date().toISOString().split('T')[1].substring(0, 12),
+        text: `[FATAL] Connection failed: ${errorMsg}`,
+        type: 'danger'
+      }]);
+      setScanState('completed');
     }
+  };
+
+  const resetScan = () => {
+    setScanState('idle');
+    setLogs([]);
+    setScanResult(null);
+    setScanError(null);
   };
 
   return (
@@ -134,6 +155,16 @@ function App() {
           {scanState === 'idle' ? 'RUN SECURITY AUDIT' :
             scanState === 'scanning' ? 'SCAN IN PROGRESS...' : 'AUDIT COMPLETED'}
         </button>
+
+        {scanState === 'completed' && (
+          <button
+            className="scan-button"
+            onClick={resetScan}
+            style={{ marginTop: '1rem', borderColor: '#FFB300', color: '#FFB300' }}
+          >
+            SCAN AGAIN
+          </button>
+        )}
 
         {/* Scanning Animation */}
         {scanState !== 'idle' && (
