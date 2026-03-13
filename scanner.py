@@ -50,8 +50,8 @@ def run_sqli_scan(url):
     except Exception as e:
         logs.append(f"[ERROR] Target unreachable: {str(e)}")
         return {
-            "status": "Secure",
-            "risk_level": "Low",
+            "status": "Unreachable",
+            "risk_level": "Error",
             "findings": findings,
             "details": logs
         }
