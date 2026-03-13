@@ -1,0 +1,6 @@
+# Force Nixpacks to detect and install both Node.js and Python
+providers = ["node", "python"]
+
+[variables]
+NODE_VERSION = "20"
+PYTHON_VERSION = "3.11"
