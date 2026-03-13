@@ -66,7 +66,7 @@ function App() {
             setScanResult(data);
             setScanState('completed');
           }
-        }, 600); // 600ms per simulated log line for visual effect
+        }, 50); // 50ms per simulated log line for visual effect
 
       } else {
         console.error("Scan error:", data.message);
