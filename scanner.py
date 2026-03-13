@@ -23,8 +23,23 @@ SQL_PAYLOADS = [
 ]
 
 SQL_ERRORS = [
-    "sql syntax", "mysql_fetch", "syntax error", "ORA-01756", "unclosed quotation mark",
-    "SQLSTATE", "Microsoft OLE DB", "PostgreSQL", "Warning: mysql", "mysqli_fetch"
+    # MySQL
+    "sql syntax", "mysql_fetch", "Warning: mysql", "mysqli_fetch", "mysql_num_rows",
+    # PostgreSQL
+    "PostgreSQL", "pg_query", "pg_exec", "unterminated quoted string",
+    # SQLite (used by OWASP Juice Shop)
+    "sqlite3", "SQLITE_ERROR", "sqlite_error", "near \"",
+    # Microsoft SQL Server
+    "Microsoft OLE DB", "unclosed quotation mark", "mssql_query",
+    # Oracle
+    "ORA-01756", "ORA-00933", "oracle error",
+    # Generic
+    "syntax error", "SQLSTATE", "SQL error", "sql error",
+    "JDBC", "database error", "db error",
+    # ColdFusion / Java
+    "SQLException", "java.sql",
+    # Error indicators in JSON responses
+    "SQLITE",
 ]
 
 def extract_params(url):
@@ -44,10 +59,9 @@ def check_sql_error(response_text):
     return False
 
 def check_response_length(original, test):
+    """Detect significant response length differences indicating SQL injection."""
     diff = abs(len(original) - len(test))
-    if diff > 50:
-        return True
-    return False
+    return diff > 30  # Lowered threshold for better sensitivity on JSON APIs
 
 def run_sqli_scan(url):
     findings = []
@@ -77,10 +91,12 @@ def run_sqli_scan(url):
             r = requests.get(injected_url, timeout=REQUEST_TIMEOUT, verify=False)
             error_detected = check_sql_error(r.text)
             length_changed = check_response_length(original, r.text)
+            status_anomaly = r.status_code >= 500  # Server errors often indicate SQLi
+
             return {
                 "payload": payload,
                 "url": injected_url,
-                "vulnerable": error_detected or length_changed
+                "vulnerable": error_detected or length_changed or status_anomaly
             }
         except Exception:
             return None
