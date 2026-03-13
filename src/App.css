@@ -580,3 +580,56 @@
     font-size: 1rem;
   }
 }
+
+/* ========== Small Phone / iPhone SE (≤ 375px) ========== */
+@media (max-width: 375px) {
+  .app-container {
+    padding: 0.5rem;
+  }
+
+  .hero-title {
+    font-size: 1.25rem;
+  }
+
+  .hero-subtitle {
+    font-size: 0.8rem;
+  }
+
+  .action-center {
+    padding: 0.75rem;
+    border-radius: 6px;
+  }
+
+  .target-input {
+    font-size: 0.8rem;
+    padding: 0.75rem;
+  }
+
+  .disclaimer-label {
+    font-size: 0.72rem;
+  }
+
+  .scan-button {
+    padding: 0.75rem;
+    font-size: 0.8rem;
+    letter-spacing: 0.5px;
+  }
+
+  .scanner-terminal {
+    height: 160px;
+    padding: 0.5rem;
+    font-size: 0.65rem;
+  }
+
+  .results-dashboard {
+    padding: 0.75rem;
+  }
+
+  .results-title {
+    font-size: 0.9rem;
+  }
+
+  .card-value {
+    font-size: 0.9rem;
+  }
+}
