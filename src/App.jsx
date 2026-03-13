@@ -11,7 +11,8 @@ function App() {
   const [scanResult, setScanResult] = useState(null);
   const terminalRef = useRef(null);
   
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  // Use relative URL in prod (same server), but localhost:8000 in local dev
+  const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
 
   // Auto-scroll terminal when new logs arrive
   useEffect(() => {
