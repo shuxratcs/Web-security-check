@@ -23,7 +23,14 @@ function App() {
   }, [logs]);
 
   const runAudit = async () => {
-    if (!targetUrl || !isAuthorized) return;
+    if (!targetUrl) {
+      alert("Please enter a target URL before scanning.");
+      return;
+    }
+    if (!isAuthorized) {
+      alert("You must check the mandatory consent checkbox to proceed.");
+      return;
+    }
 
     setScanState('scanning');
     setLogs([]);
@@ -122,7 +129,7 @@ function App() {
         <button
           className="scan-button"
           onClick={runAudit}
-          disabled={!isAuthorized || !targetUrl || scanState !== 'idle'}
+          disabled={scanState !== 'idle'}
         >
           {scanState === 'idle' ? 'RUN SECURITY AUDIT' :
             scanState === 'scanning' ? 'SCAN IN PROGRESS...' : 'AUDIT COMPLETED'}
