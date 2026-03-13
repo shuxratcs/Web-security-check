@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import './App.css'
 
-// Removed static SCAN_MESSAGES array as it is now driven by backend
+const BUILD_VERSION = 'v3';
+
 
 function App() {
   const [targetUrl, setTargetUrl] = useState('');
@@ -137,10 +138,10 @@ function App() {
           <input
             type="checkbox"
             id="auth-check"
-            className="checkbox-custom"
             checked={isAuthorized}
             onChange={(e) => setIsAuthorized(e.target.checked)}
             disabled={scanState !== 'idle'}
+            style={{ width: '20px', height: '20px', cursor: 'pointer', accentColor: 'var(--color-primary)' }}
           />
           <label htmlFor="auth-check" className="disclaimer-label">
             <strong>Mandatory:</strong> I confirm that I have authorized permission to scan this target and I accept full legal responsibility for the testing.
@@ -237,6 +238,9 @@ function App() {
           </div>
         )}
       </main>
+      <footer style={{ textAlign: 'center', padding: '2rem 0', color: 'var(--color-text-muted)', fontSize: '0.75rem', opacity: 0.5 }}>
+        SentinelSQL AI — Build {BUILD_VERSION}
+      </footer>
     </div>
   )
 }
