@@ -1,12 +1,8 @@
-# Force Nixpacks to detect and install both Node.js and Python
+# Nixpacks configuration for Railway
+# Only handles provider detection and version pinning
+# Build commands are in railway.json
 providers = ["node", "python"]
 
 [variables]
 NODE_VERSION = "20"
 PYTHON_VERSION = "3.11"
-
-[phases.build]
-cmds = ["npm run build"]
-
-[start]
-cmd = "uvicorn server:app --host 0.0.0.0 --port $PORT"

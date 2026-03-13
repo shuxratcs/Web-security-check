@@ -1,5 +1,9 @@
 import requests
+import urllib3
 from urllib.parse import urlparse, parse_qs
+
+# Suppress InsecureRequestWarning from urllib3 when using verify=False
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 SQL_PAYLOADS = [
     "'", "''", '"', "'--", "'#", "'/*", "' OR '1'='1", "' OR '1'='2", "' OR 1=1", "' OR 1=2",
@@ -46,7 +50,7 @@ def run_sqli_scan(url):
 
     try:
         logs.append("[INFO] Fetching original baseline response...")
-        original = requests.get(url, timeout=10).text
+        original = requests.get(url, timeout=10, verify=False).text
     except Exception as e:
         logs.append(f"[ERROR] Target unreachable: {str(e)}")
         return {
@@ -65,7 +69,7 @@ def run_sqli_scan(url):
         logs.append(f"[URL] {injected_url}")
 
         try:
-            r = requests.get(injected_url, timeout=10)
+            r = requests.get(injected_url, timeout=10, verify=False)
             error_detected = check_sql_error(r.text)
             length_changed = check_response_length(original, r.text)
 
