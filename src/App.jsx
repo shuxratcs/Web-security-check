@@ -11,8 +11,9 @@ function App() {
   const [scanResult, setScanResult] = useState(null);
   const terminalRef = useRef(null);
   
-  // Use relative URL in prod (same server), but localhost:8000 in local dev
-  const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
+  // Use relative path in prod (same server), but localhost:8000 in local dev
+  const API_BASE = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
+  const API_ENDPOINT = API_BASE ? `${API_BASE}/api/scan` : '/api/scan';
 
   // Auto-scroll terminal when new logs arrive
   useEffect(() => {
@@ -29,7 +30,7 @@ function App() {
 
     try {
       // 1. Fetch real logic/logs from the backend
-      const response = await fetch(`${API_URL}/api/scan`, {
+      const response = await fetch(API_ENDPOINT, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
