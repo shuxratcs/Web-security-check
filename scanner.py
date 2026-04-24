@@ -1,0 +1,123 @@
+import requests
+import urllib3
+from urllib.parse import urlparse, parse_qs, urlencode
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from crawler import crawl_target
+from ai_engine import get_ai_recon, ai_judge_response, get_remediation
+
+# Suppress InsecureRequestWarning
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+REQUEST_TIMEOUT = 5
+
+DEFAULT_PAYLOADS = [
+    "'", "' OR 1=1--", "' UNION SELECT NULL--", '" OR "1"="1', "admin' --"
+]
+
+class Scanner:
+    def __init__(self, target_url):
+        self.target_url = target_url
+        self.findings = []
+        self.logs = []
+        self.tech_stack = "Unknown"
+
+    def log(self, message, level="INFO"):
+        self.logs.append(f"[{level}] {message}")
+
+    def get_adaptive_payloads(self, field_name, context):
+        """
+        AI-lite payload generator. In a full implementation, 
+        this would call Gemini to generate a payload for a specific field.
+        """
+        # For now, we use a mix of defaults and context-aware logic
+        payloads = list(DEFAULT_PAYLOADS)
+        if "email" in field_name.lower():
+            payloads.append("test@example.com' OR 1=1--")
+        if "id" in field_name.lower():
+            payloads.append("1' OR '1'='1")
+        return payloads
+
+    def test_endpoint(self, url, method, params, payload_map):
+        """Tests a specific endpoint with payloads."""
+        try:
+            if method == 'get':
+                r = requests.get(url, params=payload_map, timeout=REQUEST_TIMEOUT, verify=False)
+            else:
+                r = requests.post(url, data=payload_map, timeout=REQUEST_TIMEOUT, verify=False)
+            
+            # 1. Basic Heuristics
+            is_suspicious = (
+                r.status_code >= 500 or 
+                "sql" in r.text.lower() or 
+                "syntax error" in r.text.lower()
+            )
+
+            if is_suspicious:
+                self.log(f"Suspicious response from {url}. Triggering AI Judge...", "WARNING")
+                # 2. AI Judge
+                judge_result = ai_judge_response(url, str(payload_map), r.text, r.status_code)
+                
+                if judge_result.get("vulnerable"):
+                    finding = {
+                        "type": "SQL Injection",
+                        "url": url,
+                        "payload": str(payload_map),
+                        "confidence": judge_result.get("confidence", 0),
+                        "reason": judge_result.get("reason", ""),
+                        "remediation": get_remediation("SQL Injection", self.tech_stack)
+                    }
+                    self.findings.append(finding)
+                    self.log(f"Vulnerability CONFIRMED by AI: {judge_result['reason']}", "CRITICAL")
+                    return True
+            return False
+        except Exception as e:
+            self.log(f"Error testing {url}: {str(e)}", "ERROR")
+            return False
+
+    def run(self):
+        self.log(f"Starting Intelligent Scan on {self.target_url}")
+        
+        # Phase 1: Recon
+        self.log("Crawling target and performing AI Reconnaissance...")
+        testable_elements, html = crawl_target(self.target_url)
+        recon = get_ai_recon(html)
+        self.tech_stack = recon.get("tech_stack", "Unknown")
+        self.log(f"Tech Stack detected: {self.tech_stack}")
+
+        # Phase 2: Scanning
+        if not testable_elements:
+            # Fallback to URL testing if no forms found
+            self.log("No forms found, testing URL parameters directly.")
+            parsed = urlparse(self.target_url)
+            params = parse_qs(parsed.query)
+            for param in params:
+                payloads = self.get_adaptive_payloads(param, self.tech_stack)
+                for p in payloads:
+                    test_params = params.copy()
+                    test_params[param] = p
+                    self.test_endpoint(self.target_url, 'get', params, test_params)
+        else:
+            for element in testable_elements:
+                if element['type'] == 'form':
+                    self.log(f"Testing form at {element['action']} ({element['method']})")
+                    for input_field in element['inputs']:
+                        name = input_field['name']
+                        payloads = self.get_adaptive_payloads(name, self.tech_stack)
+                        for p in payloads:
+                            payload_map = {inp['name']: 'test' for inp in element['inputs']}
+                            payload_map[name] = p
+                            if self.test_endpoint(element['action'], element['method'], {}, payload_map):
+                                break # Found one, move to next field or form
+
+        self.log("Scan complete.")
+        return {
+            "status": "Vulnerable" if self.findings else "Secure",
+            "risk_level": "High" if self.findings else "Low",
+            "tech_stack": self.tech_stack,
+            "findings": self.findings,
+            "details": self.logs
+        }
+
+def run_sqli_scan(url):
+    scanner = Scanner(url)
+    return scanner.run()

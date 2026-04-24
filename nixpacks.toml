@@ -1,0 +1,8 @@
+# Nixpacks configuration for Railway
+# Only handles provider detection and version pinning
+# Build commands are in railway.json
+providers = ["node", "python"]
+
+[variables]
+NODE_VERSION = "20"
+PYTHON_VERSION = "3.11"

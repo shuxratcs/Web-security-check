@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SentinelAI — Intelligent Security Scanner</title>
+    <meta name="description" content="AI-powered web vulnerability scanner. Detect SQL Injection, XSS, and more.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <style>
+        /* ═══ Design System ═══ */
+        :root {
+            --bg: #0A0E14;
+            --surface: #121820;
+            --surface-el: #1A222C;
+            --primary: #00E5FF;
+            --primary-dim: rgba(0,229,255,0.15);
+            --success: #00C853;
+            --danger: #FF1744;
+            --danger-dim: rgba(255,23,68,0.15);
+            --warning: #FFB300;
+            --text: #E0E6ED;
+            --muted: #8B9BB4;
+            --border: #232D3B;
+            --font: 'Inter', system-ui, sans-serif;
+            --mono: 'Share Tech Mono', monospace;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: var(--font);
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(to right, rgba(0,229,255,0.03) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(0,229,255,0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* ═══ Layout ═══ */
+        .layout { display: flex; min-height: 100vh; position: relative; z-index: 1; }
+
+        .sidebar {
+            width: 280px;
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+
+        .sidebar-title {
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            color: var(--muted);
+            letter-spacing: 2px;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 1rem;
+        }
+
+        .history-list { flex: 1; overflow-y: auto; }
+
+        .history-empty {
+            text-align: center;
+            color: var(--muted);
+            font-size: 0.85rem;
+            margin-top: 3rem;
+            opacity: 0.6;
+        }
+
+        .history-item {
+            padding: 0.75rem 1rem;
+            background: var(--surface-el);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .history-item:hover {
+            border-color: var(--primary);
+            transform: translateX(4px);
+        }
+
+        .history-url {
+            font-size: 0.8rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 0.4rem;
+            color: #fff;
+        }
+
+        .history-meta { display: flex; justify-content: space-between; align-items: center; }
+
+        .risk-tag {
+            font-size: 0.65rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .risk-tag.high, .risk-tag.critical { background: var(--danger-dim); color: var(--danger); }
+        .risk-tag.low { background: rgba(0,200,83,0.1); color: var(--success); }
+        .risk-tag.error { background: rgba(255,179,0,0.1); color: var(--warning); }
+
+        .history-date { font-size: 0.65rem; color: var(--muted); }
+
+        /* ═══ Main Content ═══ */
+        .main { flex: 1; padding: 2rem 3rem; max-width: 1000px; }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .logo svg { stroke: var(--primary); }
+
+        .logo-text {
+            font-size: 1.4rem;
+            font-weight: 800;
+            letter-spacing: 2px;
+            color: #fff;
+        }
+
+        .logo-text span { color: var(--primary); }
+
+        .hero-title {
+            font-size: 2.5rem;
+            font-weight: 800;
+            color: #fff;
+            margin-bottom: 0.5rem;
+            line-height: 1.1;
+        }
+
+        .hero-title span { color: var(--primary); text-shadow: 0 0 15px var(--primary-dim); }
+
+        .hero-sub {
+            color: var(--muted);
+            font-size: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        /* ═══ Input Area ═══ */
+        .action-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .action-box::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--primary), transparent);
+        }
+
+        .input-row { display: flex; gap: 1rem; margin-bottom: 1rem; }
+
+        .url-input {
+            flex: 1;
+            background: var(--surface-el);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.9rem 1.2rem;
+            color: #fff;
+            font-family: var(--mono);
+            font-size: 1rem;
+            outline: none;
+            transition: border 0.3s;
+        }
+
+        .url-input:focus { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+        .url-input::placeholder { color: var(--muted); }
+
+        .scan-btn {
+            background: var(--primary);
+            color: #000;
+            border: none;
+            border-radius: 8px;
+            padding: 0.9rem 2rem;
+            font-weight: 700;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            white-space: nowrap;
+            font-family: var(--font);
+        }
+
+        .scan-btn:hover:not(:disabled) {
+            box-shadow: 0 0 25px var(--primary-dim);
+            transform: translateY(-2px);
+        }
+
+        .scan-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .consent-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .consent-row input[type="checkbox"] {
+            width: 18px; height: 18px;
+            accent-color: var(--primary);
+            cursor: pointer;
+        }
+
+        .consent-row label {
+            font-size: 0.8rem;
+            color: var(--muted);
+            cursor: pointer;
+        }
+
+        /* ═══ Terminal ═══ */
+        .terminal {
+            display: none;
+            background: #000;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-top: 1.5rem;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+
+        .terminal.visible { display: block; animation: fadeIn 0.4s; }
+
+        .terminal-bar {
+            background: #1a1a1a;
+            padding: 0.5rem 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            border-bottom: 1px solid #333;
+        }
+
+        .dots { display: flex; gap: 5px; }
+        .dots span { width: 10px; height: 10px; border-radius: 50%; }
+        .dots span:nth-child(1) { background: #ff5f56; }
+        .dots span:nth-child(2) { background: #ffbd2e; }
+        .dots span:nth-child(3) { background: #27c93f; }
+
+        .terminal-label {
+            font-family: var(--mono);
+            font-size: 0.65rem;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .terminal-body {
+            padding: 1rem;
+            height: 220px;
+            overflow-y: auto;
+            font-family: var(--mono);
+            font-size: 0.85rem;
+        }
+
+        .terminal-body::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(rgba(0,229,255,0.03) 50%, rgba(0,0,0,0.15) 50%);
+            background-size: 100% 4px;
+            pointer-events: none;
+        }
+
+        .log-line { margin-bottom: 0.35rem; display: flex; }
+        .log-time { color: #444; margin-right: 0.75rem; min-width: 65px; font-size: 0.75rem; }
+        .log-msg { word-break: break-all; }
+        .log-msg.info { color: #666; }
+        .log-msg.success { color: var(--success); }
+        .log-msg.warning { color: var(--warning); }
+        .log-msg.danger { color: var(--danger); }
+        .log-msg.scanning { color: var(--primary); }
+
+        .cursor-blink {
+            display: inline-block;
+            width: 8px; height: 14px;
+            background: var(--primary);
+            animation: blink 1s step-end infinite;
+        }
+
+        /* ═══ Results Dashboard ═══ */
+        .dashboard {
+            display: none;
+            margin-top: 2rem;
+            animation: slideUp 0.5s;
+        }
+
+        .dashboard.visible { display: block; }
+
+        .dash-top { display: flex; gap: 2rem; margin-bottom: 2rem; align-items: center; }
+
+        .score-ring {
+            width: 140px; height: 140px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            position: relative;
+            flex-shrink: 0;
+        }
+
+        .score-ring::before {
+            content: '';
+            position: absolute;
+            inset: 8px;
+            background: var(--surface);
+            border-radius: 50%;
+        }
+
+        .score-num {
+            position: relative;
+            font-size: 2.2rem;
+            font-weight: 800;
+            color: #fff;
+            z-index: 1;
+        }
+
+        .score-lbl {
+            position: relative;
+            font-size: 0.55rem;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            z-index: 1;
+        }
+
+        .cards { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+
+        .card {
+            background: var(--surface-el);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.2rem;
+        }
+
+        .card-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 0.4rem; }
+        .card-val { font-size: 1.3rem; font-weight: 700; color: #fff; }
+        .card-val.critical { color: var(--danger); }
+        .card-val.secure { color: var(--success); }
+
+        /* ═══ Findings ═══ */
+        .findings-header {
+            font-size: 0.9rem;
+            color: #fff;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .finding {
+            background: var(--surface-el);
+            border: 1px solid var(--border);
+            border-left: 4px solid var(--danger);
+            border-radius: 10px;
+            margin-bottom: 1rem;
+            overflow: hidden;
+        }
+
+        .finding-top {
+            padding: 1rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(255,23,68,0.03);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .finding-type { color: var(--danger); font-weight: 700; font-size: 0.9rem; }
+        .finding-conf { font-size: 0.8rem; color: var(--muted); }
+
+        .finding-body { padding: 1.2rem 1.5rem; }
+        .finding-body p { margin-bottom: 0.6rem; font-size: 0.85rem; color: var(--text); }
+        .finding-body strong { color: #fff; }
+
+        .finding-body code {
+            font-family: var(--mono);
+            background: rgba(0,0,0,0.3);
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: var(--warning);
+        }
+
+        .finding-reason {
+            background: rgba(0,0,0,0.2);
+            padding: 0.75rem 1rem;
+            border-radius: 6px;
+            margin: 0.75rem 0;
+            font-style: italic;
+            color: var(--muted);
+            font-size: 0.85rem;
+        }
+
+        .fix-btn {
+            background: transparent;
+            border: 1px solid var(--primary);
+            color: var(--primary);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: var(--font);
+            margin-top: 0.5rem;
+        }
+
+        .fix-btn:hover { background: var(--primary); color: #000; }
+
+        .new-scan-btn {
+            margin-top: 2rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--muted);
+            padding: 0.8rem 2rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: var(--font);
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        .new-scan-btn:hover { border-color: #fff; color: #fff; }
+
+        /* ═══ Modal ═══ */
+        .modal-bg {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.85);
+            backdrop-filter: blur(5px);
+            z-index: 999;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-bg.visible { display: flex; }
+
+        .modal {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            width: 90%;
+            max-width: 700px;
+            max-height: 80vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-head {
+            padding: 1.2rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-head h3 { font-size: 1rem; color: #fff; }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+            overflow-y: auto;
+        }
+
+        .modal-body pre {
+            background: #000;
+            padding: 1.5rem;
+            border-radius: 8px;
+            color: var(--success);
+            font-family: var(--mono);
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+            line-height: 1.6;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--muted);
+            font-size: 0.7rem;
+            opacity: 0.5;
+        }
+
+        /* ═══ Animations ═══ */
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+        /* ═══ Responsive ═══ */
+        @media (max-width: 900px) {
+            .sidebar { display: none; }
+            .main { padding: 1.5rem; }
+            .hero-title { font-size: 1.8rem; }
+            .input-row { flex-direction: column; }
+            .cards { grid-template-columns: 1fr; }
+            .dash-top { flex-direction: column; align-items: flex-start; }
+        }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-title">SCAN HISTORY</div>
+            <div class="history-list" id="historyList">
+                <div class="history-empty">No recent scans</div>
+            </div>
+        </aside>
+
+        <!-- Main -->
+        <div class="main">
+            <div class="logo">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke-width="2">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+                <span class="logo-text">SENTINEL<span>AI</span></span>
+            </div>
+
+            <h1 class="hero-title">Intelligent Security <span>Scanner</span></h1>
+            <p class="hero-sub">AI-powered vulnerability detection for modern web applications.</p>
+
+            <div class="action-box">
+                <div class="input-row">
+                    <input type="url" class="url-input" id="urlInput" placeholder="https://example.com/page?id=1" />
+                    <button class="scan-btn" id="scanBtn" onclick="startScan()">START SCAN</button>
+                </div>
+                <div class="consent-row">
+                    <input type="checkbox" id="consent" />
+                    <label for="consent">I have authorized permission to scan this target.</label>
+                </div>
+
+                <!-- Terminal -->
+                <div class="terminal" id="terminal">
+                    <div class="terminal-bar">
+                        <div class="dots"><span></span><span></span><span></span></div>
+                        <span class="terminal-label">SentinelAI Engine Log</span>
+                    </div>
+                    <div class="terminal-body" id="terminalBody"></div>
+                </div>
+            </div>
+
+            <!-- Dashboard -->
+            <div class="dashboard" id="dashboard">
+                <div class="dash-top">
+                    <div class="score-ring" id="scoreRing">
+                        <span class="score-num" id="scoreNum">—</span>
+                        <span class="score-lbl">Security Score</span>
+                    </div>
+                    <div class="cards">
+                        <div class="card">
+                            <div class="card-label">Tech Stack</div>
+                            <div class="card-val" id="techStack" style="color: var(--primary);">—</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Risk Level</div>
+                            <div class="card-val" id="riskLevel">—</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Vulnerabilities</div>
+                            <div class="card-val" id="vulnCount">0</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="findingsList"></div>
+
+                <button class="new-scan-btn" onclick="resetScan()">NEW SCAN</button>
+            </div>
+
+            <div class="footer">SentinelAI Security — v4.0 MVP+ — Powered by AI</div>
+        </div>
+    </div>
+
+    <!-- Modal -->
+    <div class="modal-bg" id="modalBg" onclick="closeModal()">
+        <div class="modal" onclick="event.stopPropagation()">
+            <div class="modal-head">
+                <h3>REMEDIATION GUIDE</h3>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <pre id="modalCode"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let scanData = null;
+        let history = JSON.parse(localStorage.getItem('sentinel_history') || '[]');
+        renderHistory();
+
+        function startScan() {
+            const url = document.getElementById('urlInput').value.trim();
+            const consent = document.getElementById('consent').checked;
+
+            if (!url) return alert('Please enter a target URL.');
+            if (!consent) return alert('You must accept the consent checkbox.');
+
+            const btn = document.getElementById('scanBtn');
+            btn.disabled = true;
+            btn.textContent = 'SCANNING...';
+
+            document.getElementById('terminal').classList.add('visible');
+            document.getElementById('dashboard').classList.remove('visible');
+            document.getElementById('terminalBody').innerHTML = '';
+
+            fetch('/api/scan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url, consent })
+            })
+            .then(r => r.json())
+            .then(data => {
+                scanData = data;
+                const logs = data.details || [];
+                let idx = 0;
+
+                const iv = setInterval(() => {
+                    if (idx < logs.length) {
+                        addLog(logs[idx]);
+                        idx++;
+                    } else {
+                        clearInterval(iv);
+                        showResults(data);
+                        btn.textContent = 'SCAN COMPLETE';
+
+                        // Save to history
+                        history.unshift({
+                            url, date: new Date().toLocaleDateString(),
+                            risk: data.risk_level, status: data.status
+                        });
+                        if (history.length > 10) history = history.slice(0, 10);
+                        localStorage.setItem('sentinel_history', JSON.stringify(history));
+                        renderHistory();
+                    }
+                }, 100);
+            })
+            .catch(err => {
+                addLog('[FATAL] Connection error: ' + err.message);
+                btn.disabled = false;
+                btn.textContent = 'START SCAN';
+            });
+        }
+
+        function addLog(text) {
+            const body = document.getElementById('terminalBody');
+            const time = new Date().toLocaleTimeString();
+            let cls = 'info';
+            if (text.includes('[SUCCESS]')) cls = 'success';
+            else if (text.includes('[WARNING]')) cls = 'warning';
+            else if (text.includes('[CRITICAL]')) cls = 'danger';
+            else if (text.includes('[ERROR]') || text.includes('[FATAL]')) cls = 'danger';
+            else if (text.includes('[SCANNING]')) cls = 'scanning';
+
+            body.innerHTML += `<div class="log-line"><span class="log-time">${time}</span><span class="log-msg ${cls}">${text}</span></div>`;
+            body.scrollTop = body.scrollHeight;
+        }
+
+        function showResults(data) {
+            const dash = document.getElementById('dashboard');
+            dash.classList.add('visible');
+
+            const score = data.status === 'Vulnerable'
+                ? Math.max(0, 100 - data.findings.length * 30)
+                : (data.status === 'Unreachable' ? 0 : 100);
+
+            const scoreColor = score >= 70 ? 'var(--success)' : score >= 40 ? 'var(--warning)' : 'var(--danger)';
+            const ring = document.getElementById('scoreRing');
+            ring.style.background = `conic-gradient(${scoreColor} ${score}%, var(--border) 0)`;
+
+            document.getElementById('scoreNum').textContent = score;
+            document.getElementById('techStack').textContent = data.tech_stack || 'Unknown';
+
+            const risk = document.getElementById('riskLevel');
+            risk.textContent = data.risk_level;
+            risk.className = 'card-val ' + (data.risk_level === 'Low' ? 'secure' : 'critical');
+
+            document.getElementById('vulnCount').textContent = data.findings.length;
+
+            // Findings
+            const list = document.getElementById('findingsList');
+            list.innerHTML = '';
+
+            if (data.findings.length > 0) {
+                list.innerHTML = '<div class="findings-header">Detection Details</div>';
+                data.findings.forEach((f, i) => {
+                    list.innerHTML += `
+                        <div class="finding">
+                            <div class="finding-top">
+                                <span class="finding-type">${f.type}</span>
+                                <span class="finding-conf">Confidence: ${f.confidence}%</span>
+                            </div>
+                            <div class="finding-body">
+                                <p><strong>URL:</strong> ${escapeHtml(f.url)}</p>
+                                <p><strong>Payload:</strong> <code>${escapeHtml(f.payload)}</code></p>
+                                <div class="finding-reason"><strong>Analysis:</strong> ${escapeHtml(f.reason)}</div>
+                                <button class="fix-btn" onclick="showFix(${i})">VIEW REMEDIATION CODE</button>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+        }
+
+        function showFix(idx) {
+            const f = scanData.findings[idx];
+            document.getElementById('modalCode').textContent = f.remediation || 'No remediation available.';
+            document.getElementById('modalBg').classList.add('visible');
+        }
+
+        function closeModal() {
+            document.getElementById('modalBg').classList.remove('visible');
+        }
+
+        function resetScan() {
+            scanData = null;
+            document.getElementById('scanBtn').disabled = false;
+            document.getElementById('scanBtn').textContent = 'START SCAN';
+            document.getElementById('terminal').classList.remove('visible');
+            document.getElementById('dashboard').classList.remove('visible');
+            document.getElementById('terminalBody').innerHTML = '';
+            document.getElementById('urlInput').value = '';
+        }
+
+        function renderHistory() {
+            const el = document.getElementById('historyList');
+            if (history.length === 0) {
+                el.innerHTML = '<div class="history-empty">No recent scans</div>';
+                return;
+            }
+            el.innerHTML = history.map(h => `
+                <div class="history-item" onclick="document.getElementById('urlInput').value='${escapeHtml(h.url)}'">
+                    <div class="history-url">${escapeHtml(h.url)}</div>
+                    <div class="history-meta">
+                        <span class="risk-tag ${(h.risk || '').toLowerCase()}">${h.risk}</span>
+                        <span class="history-date">${h.date}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function escapeHtml(text) {
+            const d = document.createElement('div');
+            d.textContent = text;
+            return d.innerHTML;
+        }
+
+        // Keyboard shortcut: Enter to scan
+        document.getElementById('urlInput').addEventListener('keydown', e => {
+            if (e.key === 'Enter') startScan();
+        });
+    </script>
+</body>
+</html>

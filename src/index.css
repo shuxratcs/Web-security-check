@@ -1,0 +1,91 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Share+Tech+Mono&display=swap');
+
+:root {
+  --color-bg: #0A0E14; /* Deep Space Black */
+  --color-surface: #121820;
+  --color-surface-elevated: #1A222C;
+  --color-primary: #00E5FF; /* Neon Cyan */
+  --color-primary-dim: rgba(0, 229, 255, 0.2);
+  --color-success: #00C853; /* Emerald Green */
+  --color-danger: #FF1744; /* Cyber Red */
+  --color-danger-dim: rgba(255, 23, 68, 0.2);
+  --color-text: #E0E6ED;
+  --color-text-muted: #8B9BB4;
+  --color-border: #232D3B;
+
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Share Tech Mono', ui-monospace, SFMono-Regular, monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Cyberpunk grid background effect */
+body::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: 
+    linear-gradient(to right, rgba(0, 229, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 229, 255, 0.03) 1px, transparent 1px);
+  background-size: 50px 50px;
+  pointer-events: none;
+  z-index: -1;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.02em;
+}
+
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+a:hover {
+  text-shadow: 0 0 8px var(--color-primary-dim);
+}
+
+button {
+  font-family: var(--font-sans);
+}
+
+/* Utility classes */
+.text-primary { color: var(--color-primary); }
+.text-success { color: var(--color-success); }
+.text-danger { color: var(--color-danger); }
+.text-muted { color: var(--color-text-muted); }
+.font-mono { font-family: var(--font-mono); }
+
+.glow-primary {
+  box-shadow: 0 0 15px var(--color-primary-dim);
+}
+.glow-primary-text {
+  text-shadow: 0 0 10px var(--color-primary-dim);
+}
+.glow-danger {
+  box-shadow: 0 0 15px var(--color-danger-dim);
+}
+.glow-danger-text {
+  text-shadow: 0 0 10px var(--color-danger-dim);
+}
