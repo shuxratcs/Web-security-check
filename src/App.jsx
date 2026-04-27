@@ -1,133 +1,241 @@
 import { useState, useEffect, useRef } from 'react'
 import './App.css'
 
-const BUILD_VERSION = 'v4.0 MVP+';
+const BUILD_VERSION = 'v5.0 OWASP'
+const SCAN_TIMEOUT_MS = 120000
+
+const SEVERITY_LABEL = {
+  critical: 'CRITICAL',
+  high: 'HIGH',
+  medium: 'MEDIUM',
+  low: 'LOW',
+  info: 'INFO',
+}
+
+const STATIC_REMEDIATIONS = {
+  'SQL Injection':
+    'Use parameterised queries / prepared statements for every user-supplied value. Validate inputs (allow-list, length, type). Apply least-privilege DB accounts. Layer a WAF.',
+  'Reflected XSS':
+    'Apply context-aware output encoding. Use auto-escaping templating. Avoid dangerouslySetInnerHTML. Add a strict CSP without unsafe-inline.',
+  'Missing Security Headers':
+    'Set Strict-Transport-Security, X-Frame-Options (or CSP frame-ancestors), X-Content-Type-Options: nosniff, Referrer-Policy, and a baseline Content-Security-Policy.',
+  'Insecure Cookie':
+    'Set Secure, HttpOnly, and SameSite (Lax or Strict) on every session cookie. Scope Domain/Path narrowly.',
+  'Sensitive File Exposure':
+    'Remove backups and dotfiles from the deployed artefact. Block dotfile access at the web server / CDN. Rotate any leaked credentials immediately.',
+  'CORS Misconfiguration':
+    'Never combine ACAO=* with credentials=true. Reflect a known origin only after allow-listing. Restrict methods and headers to the minimum required.',
+  'Clickjacking':
+    'Set X-Frame-Options: DENY (or SAMEORIGIN) and a CSP frame-ancestors directive on all sensitive pages.',
+  'Information Disclosure':
+    'Strip Server, X-Powered-By, and version banners. Disable detailed stack traces in production. Audit HTML and JS for leaked emails and internal hostnames.',
+  'Weak SSL/TLS':
+    'Disable TLS 1.0/1.1; require TLS 1.2+ (prefer 1.3). Use a modern cipher suite. Renew certificates well before expiry; automate via ACME.',
+  'Weak CSP':
+    'Start from default-src \'self\'. Add only required origins. Avoid \'unsafe-inline\' and \'unsafe-eval\'. Use nonces for legitimate inline scripts.',
+}
+
+function logTypeFromLevel(level) {
+  switch (level) {
+    case 'CRITICAL':
+    case 'ERROR':
+      return 'danger'
+    case 'WARNING':
+      return 'warning'
+    case 'SUCCESS':
+      return 'success'
+    case 'SCANNING':
+      return 'info'
+    default:
+      return 'info'
+  }
+}
 
 function App() {
-  const [targetUrl, setTargetUrl] = useState('');
-  const [isAuthorized, setIsAuthorized] = useState(false);
-  const [scanState, setScanState] = useState('idle'); // 'idle' | 'scanning' | 'completed'
-  const [logs, setLogs] = useState([]);
-  const [scanResult, setScanResult] = useState(null);
-  const [scanError, setScanError] = useState(null);
-  const [history, setHistory] = useState([]);
-  const [showRemediation, setShowRemediation] = useState(null);
-  const terminalRef = useRef(null);
+  const [targetUrl, setTargetUrl] = useState('')
+  const [isAuthorized, setIsAuthorized] = useState(false)
+  const [scanState, setScanState] = useState('idle') // 'idle' | 'scanning' | 'completed'
+  const [logs, setLogs] = useState([])
+  const [scanResult, setScanResult] = useState(null)
+  const [scanError, setScanError] = useState(null)
+  const [history, setHistory] = useState([])
+  const [showRemediation, setShowRemediation] = useState(null)
+  const [progress, setProgress] = useState({ current: 0, total: 0, label: '' })
 
-  const API_ENDPOINT = '/api/scan';
+  const terminalRef = useRef(null)
+  const eventSourceRef = useRef(null)
+  const timeoutRef = useRef(null)
+  const findingsRef = useRef([])
+  const summaryRef = useRef(null)
 
-  // Load history from localStorage on mount
   useEffect(() => {
-    const savedHistory = localStorage.getItem('sentinel_history');
-    if (savedHistory) {
-      try {
-        setHistory(JSON.parse(savedHistory));
-      } catch (e) {
-        console.error("Failed to load history", e);
-      }
+    const saved = localStorage.getItem('sentinel_history')
+    if (saved) {
+      try { setHistory(JSON.parse(saved)) } catch (e) { /* corrupt entry — ignore */ }
     }
-  }, []);
+  }, [])
 
-  // Auto-scroll terminal when new logs arrive
   useEffect(() => {
     if (terminalRef.current) {
-      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight
     }
-  }, [logs]);
+  }, [logs])
 
-  const runAudit = async () => {
+  useEffect(() => () => closeStream(), [])
+
+  function closeStream() {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+      eventSourceRef.current = null
+    }
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+      timeoutRef.current = null
+    }
+  }
+
+  function appendLog(level, text) {
+    setLogs((prev) => [
+      ...prev,
+      {
+        time: new Date().toLocaleTimeString(),
+        text,
+        type: logTypeFromLevel(level),
+      },
+    ])
+  }
+
+  function finishScan(errorMessage = null) {
+    closeStream()
+    const summary = summaryRef.current
+    if (errorMessage) {
+      setScanError(errorMessage)
+      setScanState('completed')
+      return
+    }
+    if (summary) {
+      const merged = { ...summary, findings: findingsRef.current }
+      setScanResult(merged)
+      const newHistory = [
+        {
+          url: targetUrl,
+          date: new Date().toLocaleString(),
+          status: summary.status,
+          risk: summary.risk_level,
+        },
+        ...history,
+      ].slice(0, 10)
+      setHistory(newHistory)
+      try {
+        localStorage.setItem('sentinel_history', JSON.stringify(newHistory))
+      } catch (e) { /* quota exceeded — ignore */ }
+    } else {
+      setScanError('Scan ended without a final summary.')
+    }
+    setScanState('completed')
+  }
+
+  const runAudit = () => {
     if (!targetUrl) {
-      alert("Please enter a target URL before scanning.");
-      return;
+      alert('Please enter a target URL before scanning.')
+      return
     }
     if (!isAuthorized) {
-      alert("You must check the mandatory consent checkbox to proceed.");
-      return;
+      alert('You must check the consent box to proceed.')
+      return
     }
 
-    setScanState('scanning');
-    setLogs([]);
-    setScanError(null);
-    setScanResult(null);
+    closeStream()
+    findingsRef.current = []
+    summaryRef.current = null
 
-    try {
-      const response = await fetch(API_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: targetUrl, consent: isAuthorized })
-      });
+    setScanState('scanning')
+    setLogs([])
+    setScanError(null)
+    setScanResult(null)
+    setProgress({ current: 0, total: 0, label: '' })
 
-      const data = await response.json();
+    const params = new URLSearchParams({ url: targetUrl, consent: 'true' })
+    const es = new EventSource(`/api/scan/stream?${params.toString()}`)
+    eventSourceRef.current = es
 
-      if (data.status !== "error") {
-        const backendLogs = data.details || [];
-        let messageIndex = 0;
+    timeoutRef.current = setTimeout(() => {
+      finishScan(`Scan exceeded ${SCAN_TIMEOUT_MS / 1000}s — connection closed.`)
+    }, SCAN_TIMEOUT_MS)
 
-        // Visual simulation of log flow
-        const intervalId = setInterval(() => {
-          if (messageIndex < backendLogs.length) {
-            const text = backendLogs[messageIndex];
-            let type = 'info';
-            if (text.includes('[SUCCESS]')) type = 'success';
-            if (text.includes('[SCANNING]')) type = 'warning';
-            if (text.includes('[WARNING]')) type = 'warning';
-            if (text.includes('[CRITICAL]')) type = 'danger';
-            if (text.includes('[ERROR]')) type = 'danger';
-
-            setLogs(prev => [...prev, {
-              time: new Date().toLocaleTimeString(),
-              text: text,
-              type: type
-            }]);
-            messageIndex++;
-          } else {
-            clearInterval(intervalId);
-            setScanResult(data);
-            setScanState('completed');
-
-            // Add to history
-            const newHistory = [{
-              url: targetUrl,
-              date: new Date().toLocaleString(),
-              status: data.status,
-              risk: data.risk_level
-            }, ...history].slice(0, 10);
-            setHistory(newHistory);
-            localStorage.setItem('sentinel_history', JSON.stringify(newHistory));
-          }
-        }, 80);
-
-      } else {
-        setScanError(data.message || 'Scan returned an error.');
-        setLogs(prev => [...prev, {
-          time: new Date().toLocaleTimeString(),
-          text: `[ERROR] ${data.message || 'Unknown server error'}`,
-          type: 'danger'
-        }]);
-        setScanState('completed');
+    es.onmessage = (event) => {
+      let data
+      try {
+        data = JSON.parse(event.data)
+      } catch {
+        return
       }
-    } catch (error) {
-      setScanError(error?.message || String(error));
-      setLogs(prev => [...prev, {
-        time: new Date().toLocaleTimeString(),
-        text: `[FATAL] Connection failed: ${error?.message}`,
-        type: 'danger'
-      }]);
-      setScanState('completed');
+      if (data.type === 'log') {
+        appendLog(data.level || 'INFO', data.text)
+      } else if (data.type === 'finding') {
+        findingsRef.current = [...findingsRef.current, data]
+      } else if (data.type === 'progress') {
+        setProgress({
+          current: data.current,
+          total: data.total,
+          label: data.label,
+        })
+      } else if (data.type === 'done') {
+        summaryRef.current = data.summary
+      } else if (data.type === 'error') {
+        appendLog('ERROR', data.message || 'Scan rejected')
+        setScanError(data.message || 'Scan rejected')
+      }
     }
-  };
 
-  const calculateScore = () => {
-    if (!scanResult) return 100;
-    if (scanResult.status === 'Vulnerable') {
-      return Math.max(0, 100 - (scanResult.findings.length * 25));
+    es.addEventListener('end', () => finishScan())
+
+    es.onerror = () => {
+      // EventSource fires onerror also on graceful close after `event: end`.
+      // If we already have a summary, treat it as success; otherwise it's a real failure.
+      if (summaryRef.current) {
+        finishScan()
+      } else {
+        finishScan('Connection to scanner lost. The target may be unreachable or the server timed out.')
+      }
     }
-    return 100;
-  };
+  }
+
+  const cancelScan = () => {
+    finishScan('Scan cancelled by user.')
+  }
+
+  const newScan = () => {
+    setScanState('idle')
+    setLogs([])
+    setScanResult(null)
+    setScanError(null)
+    setProgress({ current: 0, total: 0, label: '' })
+  }
+
+  const renderRiskColor = (level) => {
+    switch (level) {
+      case 'Critical':
+        return 'var(--color-danger)'
+      case 'High':
+        return '#FF6B35'
+      case 'Medium':
+        return '#FFB300'
+      case 'Low':
+      case 'Hardenable':
+        return '#FFD54F'
+      case 'Secure':
+        return 'var(--color-success)'
+      default:
+        return 'var(--color-text-muted, #888)'
+    }
+  }
+
+  const score = scanResult?.score ?? 100
+  const summaryCounts = scanResult?.counts || { critical: 0, high: 0, medium: 0, low: 0, info: 0 }
 
   return (
     <div className="app-layout">
-      {/* Sidebar for History */}
       <aside className="sidebar">
         <div className="sidebar-header">
           <span className="sidebar-title">SCAN HISTORY</span>
@@ -140,8 +248,8 @@ function App() {
               <div key={i} className="history-item" onClick={() => setTargetUrl(item.url)}>
                 <div className="history-url">{item.url}</div>
                 <div className="history-meta">
-                  <span className={`risk-tag ${item.risk.toLowerCase()}`}>{item.risk}</span>
-                  <span className="history-date">{item.date.split(',')[0]}</span>
+                  <span className={`risk-tag ${(item.risk || '').toLowerCase()}`}>{item.risk}</span>
+                  <span className="history-date">{(item.date || '').split(',')[0]}</span>
                 </div>
               </div>
             ))
@@ -158,7 +266,7 @@ function App() {
             <span className="logo-text">SENTINEL<span className="text-primary">AI</span></span>
           </div>
           <h1 className="hero-title">Intelligent Security <span className="title-highlight">Scanner</span></h1>
-          <p className="hero-subtitle">Adaptive AI-powered vulnerability detection for modern web applications.</p>
+          <p className="hero-subtitle">Adaptive AI-powered detection across ten OWASP categories — runs entirely in your browser, no external tools required.</p>
           <div className="legal-banner">
             <strong>Authorised testing only.</strong> Unauthorised scanning may violate the
             <a href="https://www.legislation.gov.uk/ukpga/1990/18/contents" target="_blank" rel="noopener noreferrer"> Computer Misuse Act 1990</a>
@@ -176,16 +284,22 @@ function App() {
                 value={targetUrl}
                 onChange={(e) => setTargetUrl(e.target.value)}
                 disabled={scanState !== 'idle'}
+                onKeyDown={(e) => { if (e.key === 'Enter' && scanState === 'idle') runAudit() }}
               />
             </div>
-            <button
-              className={`scan-button ${scanState !== 'idle' ? 'loading' : ''}`}
-              onClick={runAudit}
-              disabled={scanState !== 'idle'}
-            >
-              {scanState === 'idle' ? 'START INTELLIGENT SCAN' :
-               scanState === 'scanning' ? 'ANALYZING...' : 'SCAN COMPLETE'}
-            </button>
+            {scanState !== 'scanning' ? (
+              <button
+                className={`scan-button ${scanState !== 'idle' ? 'loading' : ''}`}
+                onClick={runAudit}
+                disabled={scanState !== 'idle'}
+              >
+                {scanState === 'idle' ? 'START INTELLIGENT SCAN' : 'SCAN COMPLETE'}
+              </button>
+            ) : (
+              <button className="scan-button cancel" onClick={cancelScan}>
+                CANCEL
+              </button>
+            )}
           </div>
 
           <div className="disclaimer-group">
@@ -205,95 +319,121 @@ function App() {
             Scans of government, healthcare, law-enforcement, military, and major financial domains are refused. Each scan is recorded in a server-side audit log for accountability.
           </p>
 
-          {/* Terminal View */}
-          <div className={`scanner-terminal ${scanState !== 'idle' ? 'visible' : ''}`} ref={terminalRef}>
-            <div className="terminal-header">
-              <div className="terminal-dots"><span/><span/><span/></div>
-              <span className="terminal-title">SentinelAI Engine Log</span>
+          {(scanState !== 'idle') && (
+            <div className={`scanner-terminal visible`} ref={terminalRef}>
+              <div className="terminal-header">
+                <div className="terminal-dots"><span/><span/><span/></div>
+                <span className="terminal-title">SentinelAI Engine Log</span>
+                {progress.total > 0 && (
+                  <span className="progress-pill">
+                    {progress.current}/{progress.total} · {progress.label}
+                  </span>
+                )}
+              </div>
+              <div className="terminal-body">
+                {logs.map((log, i) => (
+                  <div key={i} className="log-line">
+                    <span className="log-time">{log.time}</span>
+                    <span className={`log-text ${log.type}`}>{log.text}</span>
+                  </div>
+                ))}
+                {scanState === 'scanning' && <div className="cursor-blink" />}
+              </div>
             </div>
-            <div className="terminal-body">
-              {logs.map((log, i) => (
-                <div key={i} className="log-line">
-                  <span className="log-time">{log.time}</span>
-                  <span className={`log-text ${log.type}`}>{log.text}</span>
-                </div>
-              ))}
-              {scanState === 'scanning' && <div className="cursor-blink" />}
-            </div>
-          </div>
+          )}
 
-          {/* Enhanced Results Dashboard */}
+          {scanState === 'completed' && scanError && (
+            <div className="error-banner">
+              <strong>Scan error:</strong> {scanError}
+              <button className="reset-btn" onClick={newScan}>NEW SCAN</button>
+            </div>
+          )}
+
           {scanState === 'completed' && scanResult && (
             <div className="results-dashboard">
               <div className="dashboard-top">
                 <div className="score-section">
-                  <div className="score-circle" style={{'--score': `${calculateScore()}%`}}>
-                    <div className="score-value">{calculateScore()}</div>
+                  <div className="score-circle" style={{ '--score': `${score}%` }}>
+                    <div className="score-value">{score}</div>
                     <div className="score-label">SECURITY SCORE</div>
                   </div>
                 </div>
                 <div className="summary-grid">
                   <div className="summary-card">
-                    <div className="card-label">Tech Stack</div>
-                    <div className="card-value text-primary">{scanResult.tech_stack || "Unknown"}</div>
-                  </div>
-                  <div className="summary-card">
                     <div className="card-label">Risk Level</div>
-                    <div className="card-value" style={{color: scanResult.risk_level === 'Critical' ? 'var(--color-danger)' : 'var(--color-success)'}}>
+                    <div className="card-value" style={{ color: renderRiskColor(scanResult.risk_level) }}>
                       {scanResult.risk_level}
                     </div>
                   </div>
                   <div className="summary-card">
-                    <div className="card-label">Vulnerabilities</div>
-                    <div className="card-value">{scanResult.findings.length}</div>
+                    <div className="card-label">Status</div>
+                    <div className="card-value">{scanResult.status}</div>
+                  </div>
+                  <div className="summary-card">
+                    <div className="card-label">Total Findings</div>
+                    <div className="card-value">{scanResult.findings_total ?? scanResult.findings?.length ?? 0}</div>
                   </div>
                 </div>
               </div>
 
-              {scanResult.findings.length > 0 && (
+              <div className="severity-bar">
+                {['critical', 'high', 'medium', 'low', 'info'].map((sev) => (
+                  <div key={sev} className={`sev-pill sev-${sev}`}>
+                    <span className="sev-count">{summaryCounts[sev] || 0}</span>
+                    <span className="sev-label">{SEVERITY_LABEL[sev]}</span>
+                  </div>
+                ))}
+              </div>
+
+              {scanResult.findings && scanResult.findings.length > 0 ? (
                 <div className="findings-section">
                   <h3>DETECTION DETAILS</h3>
                   {scanResult.findings.map((finding, idx) => (
-                    <div key={idx} className="finding-card">
+                    <div key={idx} className={`finding-card sev-border-${finding.severity || 'info'}`}>
                       <div className="finding-header">
-                        <span className="finding-type">{finding.type}</span>
-                        <span className="finding-conf">Confidence: {finding.confidence}%</span>
+                        <span className="finding-type">{finding.category}</span>
+                        <span className={`sev-badge sev-${finding.severity || 'info'}`}>
+                          {SEVERITY_LABEL[finding.severity || 'info']}
+                        </span>
                       </div>
                       <div className="finding-body">
-                        <p><strong>URL:</strong> {finding.url}</p>
-                        <p><strong>Payload:</strong> <code className="font-mono">{finding.payload}</code></p>
-                        <p className="finding-reason"><strong>AI Logic:</strong> {finding.reason}</p>
+                        {finding.title && <p className="finding-title"><strong>{finding.title}</strong></p>}
+                        {finding.evidence && (
+                          <p className="finding-evidence"><code className="font-mono">{finding.evidence}</code></p>
+                        )}
                         <button className="remedy-btn" onClick={() => setShowRemediation(idx)}>
-                          VIEW REMEDIATION CODE
+                          VIEW REMEDIATION
                         </button>
                       </div>
                     </div>
                   ))}
                 </div>
+              ) : (
+                <div className="findings-section">
+                  <p className="findings-clean">No vulnerabilities detected across the ten OWASP-aligned checks. Continue to monitor and re-scan after deployments.</p>
+                </div>
               )}
 
-              <button className="reset-btn" onClick={() => setScanState('idle')}>NEW SCAN</button>
+              <button className="reset-btn" onClick={newScan}>NEW SCAN</button>
             </div>
           )}
         </main>
 
-        {/* Remediation Modal */}
-        {showRemediation !== null && (
+        {showRemediation !== null && scanResult?.findings?.[showRemediation] && (
           <div className="modal-overlay" onClick={() => setShowRemediation(null)}>
-            <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <h3>REMEDIATION GUIDE</h3>
                 <button className="close-btn" onClick={() => setShowRemediation(null)}>&times;</button>
               </div>
               <div className="modal-body">
                 <div className="markdown-content">
-                  {scanResult.findings[showRemediation].remediation ? (
-                    <pre className="remedy-code">
-                      {scanResult.findings[showRemediation].remediation}
-                    </pre>
-                  ) : (
-                    "Generating fix..."
-                  )}
+                  <p><strong>{scanResult.findings[showRemediation].category}</strong> — {scanResult.findings[showRemediation].title}</p>
+                  <pre className="remedy-code">
+                    {STATIC_REMEDIATIONS[scanResult.findings[showRemediation].remediation_key
+                      || scanResult.findings[showRemediation].category]
+                      || 'Refer to OWASP guidance for remediation steps.'}
+                  </pre>
                 </div>
               </div>
             </div>
@@ -301,7 +441,7 @@ function App() {
         )}
 
         <footer className="footer">
-          SentinelAI Security — Build {BUILD_VERSION} — Powered by Google Gemini Pro
+          SentinelAI Security — Build {BUILD_VERSION} — 10 OWASP categories scanned in your browser
         </footer>
       </div>
     </div>

@@ -1,193 +1,172 @@
-import re
+"""Scan orchestrator.
+
+scan_target() is a generator yielding events:
+    {type: 'log', level, text, ts}
+    {type: 'progress', current, total, label}
+    {type: 'finding', ...finding fields}
+    {type: 'done', summary}
+
+Designed to be streamed to the client over Server-Sent Events. Never raises —
+exceptions inside individual checks become 'log' events at level=warning.
+
+run_sqli_scan() is a synchronous wrapper preserved for backwards compatibility
+with the legacy POST /api/scan endpoint.
+"""
+
 import time
-import requests
-import urllib3
-from urllib.parse import urlparse, parse_qs, urlencode
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from crawler import crawl_target
-from ai_engine import get_ai_recon, ai_judge_response, get_remediation
+from urllib.parse import urlparse
 
-# Suppress InsecureRequestWarning
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from checks import (
+    fetch_baseline,
+    check_security_headers,
+    check_ssl_tls,
+    check_cookies,
+    check_csp,
+    check_clickjacking,
+    check_cors,
+    check_sensitive_files,
+    check_info_disclosure,
+    check_xss_reflected,
+)
+from sqli_scanner import run_sqli_quick
 
-REQUEST_TIMEOUT = 5
-# Ethical rate limit: minimum delay between outgoing requests to a target.
-# Prevents denial-of-service on probed servers (BCS Code of Conduct, Section 1).
-REQUEST_DELAY = 0.5
-
-# GDPR Article 5(1)(c) — data minimisation. Mask email addresses in findings
-# so the existence of an exposure is reported without unnecessarily processing PII.
-_EMAIL_RE = re.compile(r"\b([A-Za-z0-9._%+-])[A-Za-z0-9._%+-]*@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b")
-
-
-def mask_emails(text):
-    if not isinstance(text, str):
-        return text
-    return _EMAIL_RE.sub(lambda m: f"{m.group(1)}***@{m.group(2)}", text)
-
-
-def _throttled_request(method, url, **kwargs):
-    time.sleep(REQUEST_DELAY)
-    if method == "post":
-        return requests.post(url, **kwargs)
-    return requests.get(url, **kwargs)
-
-DEFAULT_PAYLOADS = [
-    "'",
-    "' OR '1'='1",
-    "' OR 1=1--",
-    '" OR "1"="1',
-    "' UNION SELECT NULL--",
-    "' AND 1=2--",
-    "admin' --",
-    "' OR 1=1#",
-    "1' ORDER BY 1--",
-    "' OR 'a'='a",
-]
-
-SQL_ERRORS = [
-    # MySQL
-    "sql syntax", "mysql_fetch", "Warning: mysql", "mysqli_fetch", "mysql_num_rows",
-    # PostgreSQL
-    "PostgreSQL", "pg_query", "pg_exec", "unterminated quoted string",
-    # SQLite (used by OWASP Juice Shop)
-    "sqlite3", "SQLITE_ERROR", "sqlite_error", "near \"",
-    # Microsoft SQL Server
-    "Microsoft OLE DB", "unclosed quotation mark", "mssql_query",
-    # Oracle
-    "ORA-01756", "ORA-00933", "oracle error",
-    # Generic
-    "syntax error", "SQLSTATE", "SQL error", "sql error",
-    "JDBC", "database error", "db error",
-    # ColdFusion / Java
-    "SQLException", "java.sql",
-    # Error indicators in JSON responses
-    "SQLITE",
+# (label, fn(url, baseline_response) -> [findings])
+CHECK_PIPELINE = [
+    ("SSL/TLS Configuration", check_ssl_tls),
+    ("Security Headers", check_security_headers),
+    ("Cookie Hardening", check_cookies),
+    ("Content Security Policy", check_csp),
+    ("Clickjacking Protection", check_clickjacking),
+    ("Information Disclosure", check_info_disclosure),
+    ("CORS Configuration", check_cors),
+    ("Sensitive Files", check_sensitive_files),
+    ("Reflected XSS", check_xss_reflected),
+    ("SQL Injection", run_sqli_quick),
 ]
 
 
-def check_sql_error(response_text):
-    for error in SQL_ERRORS:
-        if error.lower() in response_text.lower():
-            return True
-    return False
+def _log(level, text):
+    return {"type": "log", "level": level, "text": text, "ts": time.time()}
 
 
-def check_response_length(original_len, test_text):
-    """Detect significant response length differences indicating SQL injection."""
-    diff = abs(original_len - len(test_text))
-    return diff > 30  # Lowered threshold for better sensitivity on JSON APIs
+def _severity_log_level(severity):
+    return {
+        "critical": "CRITICAL",
+        "high": "WARNING",
+        "medium": "WARNING",
+        "low": "INFO",
+        "info": "INFO",
+    }.get(severity, "INFO")
 
 
-class Scanner:
-    def __init__(self, target_url):
-        self.target_url = target_url
-        self.findings = []
-        self.logs = []
-        self.tech_stack = "Unknown"
-        self._baseline_len = 0
+def _summary(findings, status_override=None):
+    sev_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    for f in findings:
+        sev = f.get("severity", "info")
+        sev_counts[sev] = sev_counts.get(sev, 0) + 1
 
-    def log(self, message, level="INFO"):
-        self.logs.append(f"[{level}] {message}")
+    if status_override:
+        risk = "Error"
+        status = status_override
+    elif sev_counts["critical"]:
+        risk, status = "Critical", "Vulnerable"
+    elif sev_counts["high"]:
+        risk, status = "High", "Vulnerable"
+    elif sev_counts["medium"]:
+        risk, status = "Medium", "At Risk"
+    elif sev_counts["low"] or sev_counts["info"]:
+        risk, status = "Low", "Hardenable"
+    else:
+        risk, status = "Secure", "Secure"
 
-    def get_adaptive_payloads(self, field_name, context):
-        """
-        AI-lite payload generator. In a full implementation,
-        this would call Gemini to generate a payload for a specific field.
-        """
-        payloads = list(DEFAULT_PAYLOADS)
-        if "email" in field_name.lower():
-            payloads.append("test@example.com' OR 1=1--")
-        if "id" in field_name.lower():
-            payloads.append("1' OR '1'='1")
-        return payloads
+    score = 100
+    score -= sev_counts["critical"] * 25
+    score -= sev_counts["high"] * 12
+    score -= sev_counts["medium"] * 6
+    score -= sev_counts["low"] * 2
+    score = max(0, score)
 
-    def test_endpoint(self, url, method, params, payload_map):
-        """Tests a specific endpoint with payloads."""
+    return {
+        "status": status,
+        "risk_level": risk,
+        "score": score,
+        "counts": sev_counts,
+        "findings_total": len(findings),
+        "findings": findings,
+    }
+
+
+def scan_target(url):
+    """Generator yielding scan events."""
+    yield _log("INFO", f"Initialising SentinelAI engine for {url}")
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        yield _log("ERROR", f"Unsupported URL scheme: '{parsed.scheme}'. Use http:// or https://")
+        yield {"type": "done", "summary": _summary([], status_override="Invalid")}
+        return
+    if not parsed.netloc:
+        yield _log("ERROR", "URL has no host component")
+        yield {"type": "done", "summary": _summary([], status_override="Invalid")}
+        return
+
+    yield _log("INFO", "Fetching baseline response...")
+    try:
+        baseline = fetch_baseline(url, timeout=8)
+        yield _log(
+            "SUCCESS",
+            f"Baseline received: HTTP {baseline.status_code}, {len(baseline.content)} bytes",
+        )
+    except Exception as e:
+        yield _log("ERROR", f"Target unreachable: {str(e)[:200]}")
+        yield {"type": "done", "summary": _summary([], status_override="Unreachable")}
+        return
+
+    all_findings = []
+    total = len(CHECK_PIPELINE)
+
+    for i, (label, fn) in enumerate(CHECK_PIPELINE, start=1):
+        yield _log("SCANNING", f"[{i}/{total}] {label}...")
+        yield {"type": "progress", "current": i, "total": total, "label": label}
+        started = time.time()
         try:
-            if method == 'get':
-                r = _throttled_request('get', url, params=payload_map, timeout=REQUEST_TIMEOUT, verify=False)
-            else:
-                r = _throttled_request('post', url, data=payload_map, timeout=REQUEST_TIMEOUT, verify=False)
-
-            error_detected = check_sql_error(r.text)
-            length_changed = check_response_length(self._baseline_len, r.text) if self._baseline_len else False
-            status_anomaly = r.status_code >= 500
-
-            is_suspicious = error_detected or length_changed or status_anomaly
-
-            if is_suspicious:
-                self.log(f"Suspicious response from {url}. Triggering AI Judge...", "WARNING")
-                judge_result = ai_judge_response(url, str(payload_map), r.text, r.status_code)
-
-                if judge_result.get("vulnerable"):
-                    finding = {
-                        "type": "SQL Injection",
-                        "url": url,
-                        "payload": mask_emails(str(payload_map)),
-                        "confidence": judge_result.get("confidence", 0),
-                        "reason": mask_emails(judge_result.get("reason", "")),
-                        "remediation": get_remediation("SQL Injection", self.tech_stack)
-                    }
-                    self.findings.append(finding)
-                    self.log(f"Vulnerability CONFIRMED by AI: {judge_result['reason']}", "CRITICAL")
-                    return True
-            return False
+            findings = fn(url, baseline) or []
         except Exception as e:
-            self.log(f"Error testing {url}: {str(e)}", "ERROR")
-            return False
+            yield _log("WARNING", f"{label} check raised: {str(e)[:200]}")
+            findings = []
+        elapsed = time.time() - started
 
-    def run(self):
-        self.log(f"Starting Intelligent Scan on {self.target_url}")
-
-        # Capture baseline response length for diffing
-        try:
-            baseline = _throttled_request('get', self.target_url, timeout=REQUEST_TIMEOUT, verify=False)
-            self._baseline_len = len(baseline.text)
-        except Exception:
-            self._baseline_len = 0
-
-        # Phase 1: Recon
-        self.log("Crawling target and performing AI Reconnaissance...")
-        testable_elements, html = crawl_target(self.target_url)
-        recon = get_ai_recon(html)
-        self.tech_stack = recon.get("tech_stack", "Unknown")
-        self.log(f"Tech Stack detected: {self.tech_stack}")
-
-        # Phase 2: Scanning
-        if not testable_elements:
-            self.log("No forms found, testing URL parameters directly.")
-            parsed = urlparse(self.target_url)
-            params = parse_qs(parsed.query)
-            for param in params:
-                payloads = self.get_adaptive_payloads(param, self.tech_stack)
-                for p in payloads:
-                    test_params = params.copy()
-                    test_params[param] = p
-                    self.test_endpoint(self.target_url, 'get', params, test_params)
+        for f in findings:
+            all_findings.append(f)
+            yield {"type": "finding", **f}
+            yield _log(
+                _severity_log_level(f.get("severity")),
+                f"[{f.get('severity', 'info').upper()}] {f.get('category')}: {f.get('title')}",
+            )
+        if not findings:
+            yield _log("INFO", f"  → no issues detected ({elapsed:.1f}s)")
         else:
-            for element in testable_elements:
-                if element['type'] == 'form':
-                    self.log(f"Testing form at {element['action']} ({element['method']})")
-                    for input_field in element['inputs']:
-                        name = input_field['name']
-                        payloads = self.get_adaptive_payloads(name, self.tech_stack)
-                        for p in payloads:
-                            payload_map = {inp['name']: 'test' for inp in element['inputs']}
-                            payload_map[name] = p
-                            if self.test_endpoint(element['action'], element['method'], {}, payload_map):
-                                break
+            yield _log("INFO", f"  → {len(findings)} issue(s) found ({elapsed:.1f}s)")
 
-        self.log("Scan complete.")
-        return {
-            "status": "Vulnerable" if self.findings else "Secure",
-            "risk_level": "High" if self.findings else "Low",
-            "tech_stack": self.tech_stack,
-            "findings": self.findings,
-            "details": self.logs
-        }
+    yield _log("SUCCESS", f"Scan complete. {len(all_findings)} total finding(s).")
+    yield {"type": "done", "summary": _summary(all_findings)}
 
 
 def run_sqli_scan(url):
-    scanner = Scanner(url)
-    return scanner.run()
+    """Legacy entry point. Drains the generator and returns the final summary."""
+    findings = []
+    final_summary = None
+    logs = []
+    for event in scan_target(url):
+        kind = event.get("type")
+        if kind == "log":
+            logs.append(f"[{event.get('level', 'INFO')}] {event['text']}")
+        elif kind == "finding":
+            findings.append({k: v for k, v in event.items() if k != "type"})
+        elif kind == "done":
+            final_summary = event.get("summary")
+
+    summary = final_summary or _summary(findings)
+    summary["details"] = logs
+    summary["tech_stack"] = "Auto-detected"
+    return summary

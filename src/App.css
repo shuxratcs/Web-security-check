@@ -439,9 +439,135 @@
   color: #fff;
 }
 
+/* Cancel button while scanning */
+.scan-button.cancel {
+  border-color: #FFB300;
+  color: #FFB300;
+}
+.scan-button.cancel:hover {
+  background: rgba(255, 179, 0, 0.1);
+}
+
+/* Progress pill in terminal header */
+.progress-pill {
+  margin-left: auto;
+  padding: 0.25rem 0.65rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.5px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  color: var(--color-text-muted, #9aa);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 50%;
+}
+
+/* Error banner shown after a failed scan */
+.error-banner {
+  margin-top: 1.5rem;
+  padding: 1rem 1.2rem;
+  border: 1px solid var(--color-danger, #FF4136);
+  border-left-width: 4px;
+  background: rgba(255, 65, 54, 0.08);
+  color: #fff;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.error-banner strong { color: var(--color-danger, #FF4136); margin-right: 0.4rem; }
+.error-banner .reset-btn { margin-left: auto; padding: 0.4rem 0.9rem; }
+
+/* Severity bar — counts row under summary */
+.severity-bar {
+  display: flex;
+  gap: 0.6rem;
+  margin: 1.25rem 0 1.5rem;
+  flex-wrap: wrap;
+}
+.sev-pill {
+  flex: 1 1 0;
+  min-width: 110px;
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  background: var(--color-surface-elevated, #1c1f24);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+.sev-pill .sev-count {
+  font-family: var(--font-mono);
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+.sev-pill .sev-label {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 1px;
+  color: var(--color-text-muted, #888);
+}
+
+/* Severity colours */
+.sev-critical .sev-count, .sev-badge.sev-critical { color: #FF4136; }
+.sev-high .sev-count, .sev-badge.sev-high { color: #FF6B35; }
+.sev-medium .sev-count, .sev-badge.sev-medium { color: #FFB300; }
+.sev-low .sev-count, .sev-badge.sev-low { color: #FFD54F; }
+.sev-info .sev-count, .sev-badge.sev-info { color: #7FB3FF; }
+
+/* Severity badge inside finding header */
+.sev-badge {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 1px;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* Left border colour on finding cards based on severity */
+.finding-card.sev-border-critical { border-left: 4px solid #FF4136; }
+.finding-card.sev-border-high     { border-left: 4px solid #FF6B35; }
+.finding-card.sev-border-medium   { border-left: 4px solid #FFB300; }
+.finding-card.sev-border-low      { border-left: 4px solid #FFD54F; }
+.finding-card.sev-border-info     { border-left: 4px solid #7FB3FF; }
+
+.finding-title { margin: 0 0 0.5rem; color: #fff; }
+.finding-evidence {
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
+  color: var(--color-text-muted, #aaa);
+  word-break: break-word;
+}
+.finding-evidence code { background: rgba(255, 255, 255, 0.04); padding: 0.15rem 0.4rem; border-radius: 3px; }
+
+.findings-clean {
+  padding: 1.25rem;
+  border-radius: 6px;
+  background: rgba(46, 213, 115, 0.06);
+  border: 1px solid rgba(46, 213, 115, 0.25);
+  color: var(--color-success, #2ED573);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
 @media (max-width: 1024px) {
   .sidebar { display: none; }
   .app-container { padding: 2rem; }
+  .severity-bar .sev-pill { min-width: calc(50% - 0.3rem); }
+}
+@media (max-width: 600px) {
+  .severity-bar .sev-pill { min-width: calc(50% - 0.3rem); }
+  .input-row { flex-direction: column; gap: 0.75rem; }
+  .scan-button { width: 100%; }
+  .progress-pill { display: none; }
+  .legal-banner { font-size: 0.78rem; }
 }
 
 /* Legal disclaimer banner — Computer Misuse Act 1990 reference */

@@ -1,31 +1,27 @@
 import json
 import os
-import uvicorn
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
+import uvicorn
 from dotenv import load_dotenv
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
 
-from scanner import run_sqli_scan
+from scanner import run_sqli_scan, scan_target
 
 load_dotenv()
 
-# Critical-infrastructure domains that must not be scanned by this tool.
-# Aligns with Computer Misuse Act 1990 — scanning these without authorisation
-# from the system owner could constitute a Section 1 / Section 3 offence.
+# Critical-infrastructure scope restrictions (Computer Misuse Act 1990).
 BLOCKED_DOMAIN_SUFFIXES = (
     ".gov.uk", ".gov", ".mil", ".nhs.uk", ".police.uk",
 )
 BLOCKED_DOMAINS_EXACT = {
-    # Major UK banks
     "barclays.co.uk", "hsbc.co.uk", "lloydsbank.com", "natwest.com",
     "santander.co.uk", "halifax.co.uk", "monzo.com", "starling.com",
     "tsb.co.uk", "rbs.co.uk",
-    # International financial institutions
     "chase.com", "bankofamerica.com", "wellsfargo.com", "citibank.com",
     "jpmorgan.com", "goldmansachs.com", "ubs.com", "deutsche-bank.com",
     "paypal.com", "stripe.com", "revolut.com",
@@ -48,9 +44,6 @@ def is_blocked_domain(url: str) -> bool:
 
 
 def append_audit_log(target_url: str, status: str, findings_count: int) -> None:
-    """Append a single audit entry. Auto-prunes to AUDIT_LOG_MAX_ENTRIES.
-    Supports accountability (BCS Code of Conduct, Section 4) and ISO/IEC 27001
-    audit-trail requirements while honouring data minimisation (only metadata)."""
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "target": target_url,
@@ -67,8 +60,24 @@ def append_audit_log(target_url: str, status: str, findings_count: int) -> None:
         with open(AUDIT_LOG_PATH, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
     except Exception:
-        # Audit logging must never block a scan; failures are silently tolerated.
         pass
+
+
+def _validate(url: str, consent: bool):
+    if not consent:
+        return "Legal consent required."
+    if not url:
+        return "URL is required."
+    if not url.startswith(("http://", "https://")):
+        return "URL must start with http:// or https://"
+    if is_blocked_domain(url):
+        return (
+            "Target is on the protected critical-infrastructure list "
+            "(government, healthcare, law enforcement, military, or major "
+            "financial institutions). Scanning is refused under the "
+            "Computer Misuse Act 1990."
+        )
+    return None
 
 
 app = FastAPI()
@@ -76,7 +85,7 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -89,26 +98,16 @@ class ScanRequest(BaseModel):
 
 @app.post("/api/scan")
 async def start_scan(request: ScanRequest):
-    if not request.consent:
-        return {"status": "error", "message": "Legal consent required"}
-
-    if is_blocked_domain(request.url):
-        append_audit_log(request.url, "blocked", 0)
-        return {
-            "status": "error",
-            "message": (
-                "Target domain is on the protected critical-infrastructure list "
-                "(government, healthcare, law enforcement, military, or major "
-                "financial institutions). Scanning is refused under the Computer "
-                "Misuse Act 1990."
-            ),
-        }
+    err = _validate(request.url, request.consent)
+    if err:
+        append_audit_log(request.url or "", "rejected", 0)
+        return {"status": "error", "message": err}
 
     try:
         result = run_sqli_scan(request.url)
     except Exception as e:
         append_audit_log(request.url, "error", 0)
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": str(e)[:500]}
 
     append_audit_log(
         request.url,
@@ -118,9 +117,49 @@ async def start_scan(request: ScanRequest):
     return result
 
 
+@app.get("/api/scan/stream")
+def scan_stream(url: str = Query(...), consent: bool = Query(False)):
+    """SSE endpoint streaming scan progress in real time."""
+
+    def event_gen():
+        nonlocal_summary = {"status": "unknown", "findings_total": 0}
+
+        err = _validate(url, consent)
+        if err:
+            payload = {"type": "error", "message": err}
+            yield f"data: {json.dumps(payload)}\n\n"
+            yield "event: end\ndata: {}\n\n"
+            append_audit_log(url or "", "rejected", 0)
+            return
+
+        try:
+            for ev in scan_target(url):
+                if ev.get("type") == "done":
+                    nonlocal_summary = ev.get("summary", nonlocal_summary)
+                yield f"data: {json.dumps(ev)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)[:500]})}\n\n"
+
+        yield "event: end\ndata: {}\n\n"
+        append_audit_log(
+            url,
+            nonlocal_summary.get("status", "unknown"),
+            nonlocal_summary.get("findings_total", 0),
+        )
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 @app.get("/api/audit")
 async def get_audit_log():
-    """Read-only access to the audit trail (most recent first)."""
     if not os.path.exists(AUDIT_LOG_PATH):
         return {"entries": []}
     try:
@@ -128,16 +167,20 @@ async def get_audit_log():
             entries = [json.loads(ln) for ln in (l.strip() for l in f) if ln]
         return {"entries": list(reversed(entries))}
     except Exception as e:
-        return {"entries": [], "error": str(e)}
+        return {"entries": [], "error": str(e)[:200]}
 
 
-# Mount the Vite built frontend
+@app.get("/api/health")
+async def health():
+    return {"status": "ok"}
+
+
+# Mount the Vite-built frontend as a catch-all.
 dist_dir = os.path.join(os.path.dirname(__file__), "dist")
 
 
 @app.get("/{full_path:path}")
 async def serve_frontend(full_path: str):
-    """Serve Vite-built frontend assets with appropriate caching headers."""
     path = os.path.join(dist_dir, full_path)
     if os.path.isfile(path):
         return FileResponse(path)
