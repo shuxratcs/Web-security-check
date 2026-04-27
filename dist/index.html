@@ -234,6 +234,18 @@
             cursor: pointer;
         }
 
+        .legal-disclaimer {
+            background: rgba(255,179,0,0.06);
+            border: 1px solid rgba(255,179,0,0.15);
+            border-radius: 6px;
+            padding: 0.6rem 0.9rem;
+            margin-top: 0.75rem;
+            font-size: 0.7rem;
+            color: var(--muted);
+            line-height: 1.5;
+        }
+        .legal-disclaimer strong { color: var(--warning); }
+
         /* ═══ Terminal ═══ */
         .terminal {
             display: none;
@@ -363,6 +375,31 @@
         .card-val { font-size: 1.3rem; font-weight: 700; color: #fff; }
         .card-val.critical { color: var(--danger); }
         .card-val.secure { color: var(--success); }
+        .card-val.medium { color: var(--warning); }
+
+        /* ═══ Scan Modules Grid ═══ */
+        .modules-section { margin-top: 1.5rem; margin-bottom: 1.5rem; }
+        .modules-header { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 0.75rem; font-weight: 600; }
+        .modules-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.6rem; }
+        .module-chip {
+            background: var(--surface-el);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.7rem 0.5rem;
+            text-align: center;
+            transition: all 0.2s;
+            cursor: default;
+        }
+        .module-chip:hover { border-color: var(--primary); transform: translateY(-2px); }
+        .module-chip.has-issues { border-color: rgba(255,23,68,0.3); background: rgba(255,23,68,0.05); }
+        .module-chip.clean { border-color: rgba(0,200,83,0.2); }
+        .module-icon { font-size: 1.2rem; margin-bottom: 0.3rem; }
+        .module-name { font-size: 0.6rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .module-count { font-size: 0.85rem; font-weight: 700; }
+        .module-count.red { color: var(--danger); }
+        .module-count.green { color: var(--success); }
+
+        @media (max-width: 900px) { .modules-grid { grid-template-columns: repeat(3, 1fr); } }
 
         /* ═══ Findings ═══ */
         .findings-header {
@@ -565,6 +602,13 @@
                     <input type="checkbox" id="consent" />
                     <label for="consent">I have authorized permission to scan this target.</label>
                 </div>
+                <div class="legal-disclaimer">
+                    <strong>⚠️ Legal Notice:</strong> This tool is for <strong>authorized security testing only</strong>.
+                    Unauthorized scanning of systems you do not own or have explicit permission to test
+                    may violate the <strong>Computer Misuse Act 1990</strong> (UK), the <strong>CFAA</strong> (US),
+                    and similar legislation. Scanning of government, military, healthcare, and financial
+                    domains is automatically blocked. By proceeding, you confirm legal authorization.
+                </div>
 
                 <!-- Terminal -->
                 <div class="terminal" id="terminal">
@@ -593,10 +637,15 @@
                             <div class="card-val" id="riskLevel">—</div>
                         </div>
                         <div class="card">
-                            <div class="card-label">Vulnerabilities</div>
+                            <div class="card-label">Total Issues</div>
                             <div class="card-val" id="vulnCount">0</div>
                         </div>
                     </div>
+                </div>
+
+                <div class="modules-section">
+                    <div class="modules-header">Scan Modules</div>
+                    <div class="modules-grid" id="modulesGrid"></div>
                 </div>
 
                 <div id="findingsList"></div>
@@ -604,7 +653,7 @@
                 <button class="new-scan-btn" onclick="resetScan()">NEW SCAN</button>
             </div>
 
-            <div class="footer">SentinelAI Security — v4.0 MVP+ — Powered by AI</div>
+            <div class="footer">SentinelAI Security — v5.0 — 10 Security Modules — Powered by AI</div>
         </div>
     </div>
 
@@ -649,6 +698,15 @@
             .then(r => r.json())
             .then(data => {
                 scanData = data;
+
+                // Handle blocked domains (legal safeguard)
+                if (data.status === 'Blocked') {
+                    addLog('[ERROR] ' + (data.blocked_reason || 'Domain blocked'));
+                    btn.disabled = false;
+                    btn.textContent = 'BLOCKED';
+                    return;
+                }
+
                 const logs = data.details || [];
                 let idx = 0;
 
@@ -697,9 +755,9 @@
             const dash = document.getElementById('dashboard');
             dash.classList.add('visible');
 
-            const score = data.status === 'Vulnerable'
-                ? Math.max(0, 100 - data.findings.length * 30)
-                : (data.status === 'Unreachable' ? 0 : 100);
+            const score = data.security_score !== undefined
+                ? data.security_score
+                : (data.status === 'Vulnerable' ? Math.max(0, 100 - data.findings.length * 10) : 100);
 
             const scoreColor = score >= 70 ? 'var(--success)' : score >= 40 ? 'var(--warning)' : 'var(--danger)';
             const ring = document.getElementById('scoreRing');
@@ -710,32 +768,61 @@
 
             const risk = document.getElementById('riskLevel');
             risk.textContent = data.risk_level;
-            risk.className = 'card-val ' + (data.risk_level === 'Low' ? 'secure' : 'critical');
+            const riskCls = data.risk_level === 'Low' ? 'secure' : data.risk_level === 'Medium' ? 'medium' : 'critical';
+            risk.className = 'card-val ' + riskCls;
 
             document.getElementById('vulnCount').textContent = data.findings.length;
 
-            // Findings
+            // Render scan modules grid
+            const grid = document.getElementById('modulesGrid');
+            grid.innerHTML = '';
+            if (data.scan_modules) {
+                data.scan_modules.forEach(m => {
+                    const hasIssues = m.count > 0;
+                    grid.innerHTML += `
+                        <div class="module-chip ${hasIssues ? 'has-issues' : 'clean'}">
+                            <div class="module-icon">${m.icon}</div>
+                            <div class="module-name">${escapeHtml(m.name)}</div>
+                            <div class="module-count ${hasIssues ? 'red' : 'green'}">${hasIssues ? m.count : '✓'}</div>
+                        </div>
+                    `;
+                });
+            }
+
+            // Findings grouped by category
             const list = document.getElementById('findingsList');
             list.innerHTML = '';
 
             if (data.findings.length > 0) {
-                list.innerHTML = '<div class="findings-header">Detection Details</div>';
+                // Group by category
+                const groups = {};
                 data.findings.forEach((f, i) => {
-                    list.innerHTML += `
-                        <div class="finding">
-                            <div class="finding-top">
-                                <span class="finding-type">${f.type}</span>
-                                <span class="finding-conf">Confidence: ${f.confidence}%</span>
-                            </div>
-                            <div class="finding-body">
-                                <p><strong>URL:</strong> ${escapeHtml(f.url)}</p>
-                                <p><strong>Payload:</strong> <code>${escapeHtml(f.payload)}</code></p>
-                                <div class="finding-reason"><strong>Analysis:</strong> ${escapeHtml(f.reason)}</div>
-                                <button class="fix-btn" onclick="showFix(${i})">VIEW REMEDIATION CODE</button>
-                            </div>
-                        </div>
-                    `;
+                    const cat = f.category || 'Other';
+                    if (!groups[cat]) groups[cat] = [];
+                    groups[cat].push({...f, _idx: i});
                 });
+
+                for (const [cat, items] of Object.entries(groups)) {
+                    list.innerHTML += `<div class="findings-header">${escapeHtml(cat)} (${items.length})</div>`;
+                    items.forEach(f => {
+                        const urlLine = f.url ? `<p><strong>URL:</strong> ${escapeHtml(f.url)}</p>` : '';
+                        const payloadLine = f.payload ? `<p><strong>Payload:</strong> <code>${escapeHtml(f.payload)}</code></p>` : '';
+                        list.innerHTML += `
+                            <div class="finding">
+                                <div class="finding-top">
+                                    <span class="finding-type">${escapeHtml(f.type)}</span>
+                                    <span class="finding-conf">Confidence: ${f.confidence}%</span>
+                                </div>
+                                <div class="finding-body">
+                                    ${urlLine}
+                                    ${payloadLine}
+                                    <div class="finding-reason"><strong>Analysis:</strong> ${escapeHtml(f.reason)}</div>
+                                    <button class="fix-btn" onclick="showFix(${f._idx})">VIEW REMEDIATION</button>
+                                </div>
+                            </div>
+                        `;
+                    });
+                }
             }
         }
 
