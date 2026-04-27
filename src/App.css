@@ -443,3 +443,39 @@
   .sidebar { display: none; }
   .app-container { padding: 2rem; }
 }
+
+/* Legal disclaimer banner — Computer Misuse Act 1990 reference */
+.legal-banner {
+  margin: 1.5rem auto 0;
+  max-width: 720px;
+  padding: 0.85rem 1.1rem;
+  border: 1px solid var(--color-warning, #FFB300);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: rgba(255, 179, 0, 0.06);
+  color: var(--color-text, #ddd);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.legal-banner strong {
+  color: var(--color-warning, #FFB300);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-right: 0.4rem;
+}
+
+.legal-banner a {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+.legal-fineprint {
+  max-width: 640px;
+  margin: 0.6rem auto 0;
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #888);
+  text-align: center;
+  line-height: 1.5;
+}

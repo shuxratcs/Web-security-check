@@ -1,3 +1,5 @@
+import re
+import time
 import requests
 import urllib3
 from urllib.parse import urlparse, parse_qs, urlencode
@@ -9,6 +11,26 @@ from ai_engine import get_ai_recon, ai_judge_response, get_remediation
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 REQUEST_TIMEOUT = 5
+# Ethical rate limit: minimum delay between outgoing requests to a target.
+# Prevents denial-of-service on probed servers (BCS Code of Conduct, Section 1).
+REQUEST_DELAY = 0.5
+
+# GDPR Article 5(1)(c) — data minimisation. Mask email addresses in findings
+# so the existence of an exposure is reported without unnecessarily processing PII.
+_EMAIL_RE = re.compile(r"\b([A-Za-z0-9._%+-])[A-Za-z0-9._%+-]*@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b")
+
+
+def mask_emails(text):
+    if not isinstance(text, str):
+        return text
+    return _EMAIL_RE.sub(lambda m: f"{m.group(1)}***@{m.group(2)}", text)
+
+
+def _throttled_request(method, url, **kwargs):
+    time.sleep(REQUEST_DELAY)
+    if method == "post":
+        return requests.post(url, **kwargs)
+    return requests.get(url, **kwargs)
 
 DEFAULT_PAYLOADS = [
     "'",
@@ -84,9 +106,9 @@ class Scanner:
         """Tests a specific endpoint with payloads."""
         try:
             if method == 'get':
-                r = requests.get(url, params=payload_map, timeout=REQUEST_TIMEOUT, verify=False)
+                r = _throttled_request('get', url, params=payload_map, timeout=REQUEST_TIMEOUT, verify=False)
             else:
-                r = requests.post(url, data=payload_map, timeout=REQUEST_TIMEOUT, verify=False)
+                r = _throttled_request('post', url, data=payload_map, timeout=REQUEST_TIMEOUT, verify=False)
 
             error_detected = check_sql_error(r.text)
             length_changed = check_response_length(self._baseline_len, r.text) if self._baseline_len else False
@@ -102,9 +124,9 @@ class Scanner:
                     finding = {
                         "type": "SQL Injection",
                         "url": url,
-                        "payload": str(payload_map),
+                        "payload": mask_emails(str(payload_map)),
                         "confidence": judge_result.get("confidence", 0),
-                        "reason": judge_result.get("reason", ""),
+                        "reason": mask_emails(judge_result.get("reason", "")),
                         "remediation": get_remediation("SQL Injection", self.tech_stack)
                     }
                     self.findings.append(finding)
@@ -120,7 +142,7 @@ class Scanner:
 
         # Capture baseline response length for diffing
         try:
-            baseline = requests.get(self.target_url, timeout=REQUEST_TIMEOUT, verify=False)
+            baseline = _throttled_request('get', self.target_url, timeout=REQUEST_TIMEOUT, verify=False)
             self._baseline_len = len(baseline.text)
         except Exception:
             self._baseline_len = 0

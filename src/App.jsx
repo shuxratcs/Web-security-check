@@ -159,6 +159,11 @@ function App() {
           </div>
           <h1 className="hero-title">Intelligent Security <span className="title-highlight">Scanner</span></h1>
           <p className="hero-subtitle">Adaptive AI-powered vulnerability detection for modern web applications.</p>
+          <div className="legal-banner">
+            <strong>Authorised testing only.</strong> Unauthorised scanning may violate the
+            <a href="https://www.legislation.gov.uk/ukpga/1990/18/contents" target="_blank" rel="noopener noreferrer"> Computer Misuse Act 1990</a>
+            {' '}and equivalent laws in your jurisdiction. By using this tool you confirm you have explicit permission from the system owner.
+          </div>
         </header>
 
         <main className="action-center">
@@ -193,9 +198,12 @@ function App() {
               className="checkbox-custom"
             />
             <label htmlFor="auth-check" className="disclaimer-label">
-              I have authorized permission to scan this target.
+              I confirm I have explicit authorisation to scan this target and accept full legal responsibility for the testing.
             </label>
           </div>
+          <p className="legal-fineprint">
+            Scans of government, healthcare, law-enforcement, military, and major financial domains are refused. Each scan is recorded in a server-side audit log for accountability.
+          </p>
 
           {/* Terminal View */}
           <div className={`scanner-terminal ${scanState !== 'idle' ? 'visible' : ''}`} ref={terminalRef}>
