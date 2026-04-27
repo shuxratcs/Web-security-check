@@ -22,7 +22,7 @@ class ScanRequest(BaseModel):
 async def start_scan(request: ScanRequest):
     if not request.consent:
         return {"status": "error", "message": "Legal consent required"}
-    
+
     # Mock data for testing the new MVP+ UI
     return {
         "status": "Vulnerable",
