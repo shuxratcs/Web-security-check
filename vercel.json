@@ -4,11 +4,5 @@
   "framework": "vite",
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.py" }
-  ],
-  "functions": {
-    "api/index.py": {
-      "runtime": "@vercel/python@4.6.0",
-      "maxDuration": 60
-    }
-  }
+  ]
 }
