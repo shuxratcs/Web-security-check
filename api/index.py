@@ -1,8 +1,13 @@
 """Vercel Serverless Function — SentinelAI API.
 
-Self-contained Python function for Vercel deployment.
+Self-contained Python serverless handler for Vercel deployment.
 All /api/* requests are routed here via vercel.json rewrites.
-Uses the standalone scanner from start.py logic (stdlib only, no pip deps needed).
+Stdlib-only scanner — no pip deps required at request time.
+
+Two sibling repo-root modules are imported because they are pure-stdlib
+helpers shared with the FastAPI backend (server.py): the A06 component
+catalogue and the SQLite history store. Both are kept dependency-free
+specifically so this handler stays self-contained.
 """
 
 import json
@@ -10,6 +15,7 @@ import os
 import re
 import socket
 import ssl
+import sys
 import time
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -17,6 +23,14 @@ from http.client import HTTPConnection, HTTPSConnection
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 from http.server import BaseHTTPRequestHandler
+
+# Make sibling modules at the repo root importable from inside api/.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from outdated_components_db import detect_components  # noqa: E402
+from history_store import get_scan, list_scans, record_scan  # noqa: E402
 
 # ─── Domain Restrictions (Computer Misuse Act 1990) ───────────────────
 BLOCKED_DOMAIN_SUFFIXES = (
@@ -295,6 +309,20 @@ def check_csp(resp_headers):
     return findings
 
 
+def check_outdated_components(resp_headers, body):
+    """OWASP A06 — Vulnerable / Outdated Components."""
+    findings = []
+    headers_lc = {k.lower(): v for k, v in (resp_headers or {}).items()}
+    for cid, name, detected, min_safe, rationale in detect_components(headers_lc, body or ""):
+        findings.append(_finding(
+            "high",
+            "Vulnerable / Outdated Component",
+            f"{name} {detected} is older than the minimum safe version {min_safe}",
+            f"{cid}={detected}; reason={rationale}",
+        ))
+    return findings
+
+
 def check_sensitive_paths(base_url):
     findings = []
     parsed = urlparse(base_url)
@@ -384,6 +412,7 @@ def scan_target_generator(url):
         ("Info Disclosure", lambda: check_info_disclosure(headers, body)),
         ("CORS", lambda: check_cors(url, headers)),
         ("Sensitive Files", lambda: check_sensitive_paths(url)),
+        ("Outdated Components", lambda: check_outdated_components(headers, body)),
     ]
     total = len(checks) + 2  # +SQL, +XSS
 
@@ -469,6 +498,13 @@ class handler(BaseHTTPRequestHandler):
         self._set_cors()
         self.end_headers()
 
+    def _persist(self, target_url, summary):
+        """Write one scan row to history. Failures must never break the response."""
+        try:
+            record_scan(target_url or "", summary or {"status": "unknown", "findings_total": 0})
+        except Exception:
+            pass
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
@@ -478,21 +514,48 @@ class handler(BaseHTTPRequestHandler):
             self._json_response(200, {"status": "ok"})
             return
 
+        if path == "/api/history" or path == "/api/audit":
+            try:
+                limit = int(qs.get("limit", ["50"])[0])
+            except Exception:
+                limit = 50
+            try:
+                self._json_response(200, {"entries": list_scans(limit=limit)})
+            except Exception as e:
+                self._json_response(200, {"entries": [], "error": str(e)[:200]})
+            return
+
+        if path.startswith("/api/scans/"):
+            tail = path[len("/api/scans/"):]
+            try:
+                scan = get_scan(int(tail))
+            except Exception:
+                self._json_response(400, {"error": "Invalid scan id"})
+                return
+            if not scan:
+                self._json_response(404, {"error": "Scan not found"})
+                return
+            self._json_response(200, scan)
+            return
+
         if path == "/api/scan/stream":
             url = qs.get("url", [""])[0]
             consent = qs.get("consent", ["false"])[0].lower() == "true"
 
             if not consent:
                 self._send_sse_error("Legal consent required.")
+                self._persist(url, {"status": "rejected", "findings_total": 0})
                 return
             if not url:
                 self._send_sse_error("URL is required.")
                 return
             if not url.startswith(("http://", "https://")):
                 self._send_sse_error("URL must start with http:// or https://")
+                self._persist(url, {"status": "rejected", "findings_total": 0})
                 return
             if is_blocked_domain(url):
                 self._send_sse_error("Target is on the protected critical-infrastructure list.")
+                self._persist(url, {"status": "rejected", "findings_total": 0})
                 return
 
             # Stream SSE
@@ -503,12 +566,16 @@ class handler(BaseHTTPRequestHandler):
             self._set_cors()
             self.end_headers()
 
+            final_summary = {"status": "unknown", "findings_total": 0}
             for ev in scan_target_generator(url):
+                if ev.get("type") == "done":
+                    final_summary = ev.get("summary", final_summary)
                 line = f"data: {json.dumps(ev)}\n\n"
                 self.wfile.write(line.encode("utf-8"))
                 self.wfile.flush()
             self.wfile.write(b"event: end\ndata: {}\n\n")
             self.wfile.flush()
+            self._persist(url, final_summary)
             return
 
         self._json_response(404, {"error": "Not found"})
@@ -530,12 +597,15 @@ class handler(BaseHTTPRequestHandler):
             consent = data.get("consent", False)
 
             if not consent:
+                self._persist(url, {"status": "rejected", "findings_total": 0})
                 self._json_response(200, {"status": "error", "message": "Legal consent required."})
                 return
             if not url or not url.startswith(("http://", "https://")):
+                self._persist(url, {"status": "rejected", "findings_total": 0})
                 self._json_response(200, {"status": "error", "message": "URL is required and must start with http(s)://"})
                 return
             if is_blocked_domain(url):
+                self._persist(url, {"status": "rejected", "findings_total": 0})
                 self._json_response(200, {"status": "error", "message": "Target is blocked."})
                 return
 
@@ -548,6 +618,7 @@ class handler(BaseHTTPRequestHandler):
                 elif ev.get("type") == "done":
                     summary = ev.get("summary")
             result = summary or _summary(findings)
+            self._persist(url, result)
             self._json_response(200, result)
             return
 

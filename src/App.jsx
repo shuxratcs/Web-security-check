@@ -68,11 +68,15 @@ function App() {
   const findingsRef = useRef([])
   const summaryRef = useRef(null)
 
+  const refreshHistory = () => {
+    fetch('/api/history?limit=20')
+      .then((r) => (r.ok ? r.json() : { entries: [] }))
+      .then((d) => setHistory(Array.isArray(d.entries) ? d.entries : []))
+      .catch(() => { /* offline / cold start — keep current list */ })
+  }
+
   useEffect(() => {
-    const saved = localStorage.getItem('sentinel_history')
-    if (saved) {
-      try { setHistory(JSON.parse(saved)) } catch (e) { /* corrupt entry — ignore */ }
-    }
+    refreshHistory()
   }, [])
 
   useEffect(() => {
@@ -116,19 +120,9 @@ function App() {
     if (summary) {
       const merged = { ...summary, findings: findingsRef.current }
       setScanResult(merged)
-      const newHistory = [
-        {
-          url: targetUrl,
-          date: new Date().toLocaleString(),
-          status: summary.status,
-          risk: summary.risk_level,
-        },
-        ...history,
-      ].slice(0, 10)
-      setHistory(newHistory)
-      try {
-        localStorage.setItem('sentinel_history', JSON.stringify(newHistory))
-      } catch (e) { /* quota exceeded — ignore */ }
+      // Backend persists each completed scan; pull the canonical list back so
+      // sidebar + scan id stay in sync across reloads and between deploys.
+      refreshHistory()
     } else {
       setScanError('Scan ended without a final summary.')
     }
@@ -244,15 +238,22 @@ function App() {
           {history.length === 0 ? (
             <div className="history-empty">No recent scans</div>
           ) : (
-            history.map((item, i) => (
-              <div key={i} className="history-item" onClick={() => setTargetUrl(item.url)}>
-                <div className="history-url">{item.url}</div>
-                <div className="history-meta">
-                  <span className={`risk-tag ${(item.risk || '').toLowerCase()}`}>{item.risk}</span>
-                  <span className="history-date">{(item.date || '').split(',')[0]}</span>
+            history.map((item) => {
+              const url = item.target_url || item.url || ''
+              const risk = item.risk_level || item.risk || ''
+              const when = item.created_at
+                ? new Date(item.created_at).toLocaleDateString()
+                : (item.date || '').split(',')[0]
+              return (
+                <div key={item.id ?? url + when} className="history-item" onClick={() => setTargetUrl(url)}>
+                  <div className="history-url">{url}</div>
+                  <div className="history-meta">
+                    <span className={`risk-tag ${risk.toLowerCase()}`}>{risk}</span>
+                    <span className="history-date">{when}</span>
+                  </div>
                 </div>
-              </div>
-            ))
+              )
+            })
           )}
         </div>
       </aside>

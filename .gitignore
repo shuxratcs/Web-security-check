@@ -36,3 +36,4 @@ audit_log.json
 
 # Vercel
 .vercel
+dist

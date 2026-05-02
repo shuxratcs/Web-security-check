@@ -1,15 +1,15 @@
 import json
 import os
-from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+from history_store import get_scan, list_scans, record_scan
 from scanner import run_sqli_scan, scan_target
 
 load_dotenv()
@@ -27,9 +27,6 @@ BLOCKED_DOMAINS_EXACT = {
     "paypal.com", "stripe.com", "revolut.com",
 }
 
-AUDIT_LOG_PATH = os.path.join(os.path.dirname(__file__), "audit.log")
-AUDIT_LOG_MAX_ENTRIES = 100
-
 
 def is_blocked_domain(url: str) -> bool:
     try:
@@ -43,22 +40,10 @@ def is_blocked_domain(url: str) -> bool:
     return any(host == suf.lstrip(".") or host.endswith(suf) for suf in BLOCKED_DOMAIN_SUFFIXES)
 
 
-def append_audit_log(target_url: str, status: str, findings_count: int) -> None:
-    entry = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "target": target_url,
-        "status": status,
-        "findings": findings_count,
-    }
+def _persist(target_url: str, summary: dict) -> None:
+    """Write one scan row to history. Failures must never break the response."""
     try:
-        lines = []
-        if os.path.exists(AUDIT_LOG_PATH):
-            with open(AUDIT_LOG_PATH, "r", encoding="utf-8") as f:
-                lines = [ln for ln in (l.strip() for l in f) if ln]
-        lines.append(json.dumps(entry))
-        lines = lines[-AUDIT_LOG_MAX_ENTRIES:]
-        with open(AUDIT_LOG_PATH, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
+        record_scan(target_url, summary)
     except Exception:
         pass
 
@@ -100,20 +85,16 @@ class ScanRequest(BaseModel):
 async def start_scan(request: ScanRequest):
     err = _validate(request.url, request.consent)
     if err:
-        append_audit_log(request.url or "", "rejected", 0)
+        _persist(request.url or "", {"status": "rejected", "findings_total": 0})
         return {"status": "error", "message": err}
 
     try:
         result = run_sqli_scan(request.url)
     except Exception as e:
-        append_audit_log(request.url, "error", 0)
+        _persist(request.url, {"status": "error", "findings_total": 0})
         return {"status": "error", "message": str(e)[:500]}
 
-    append_audit_log(
-        request.url,
-        result.get("status", "unknown"),
-        len(result.get("findings", [])),
-    )
+    _persist(request.url, result)
     return result
 
 
@@ -122,30 +103,29 @@ def scan_stream(url: str = Query(...), consent: bool = Query(False)):
     """SSE endpoint streaming scan progress in real time."""
 
     def event_gen():
-        nonlocal_summary = {"status": "unknown", "findings_total": 0}
+        final_summary = {"status": "unknown", "findings_total": 0}
 
         err = _validate(url, consent)
         if err:
             payload = {"type": "error", "message": err}
             yield f"data: {json.dumps(payload)}\n\n"
             yield "event: end\ndata: {}\n\n"
-            append_audit_log(url or "", "rejected", 0)
+            _persist(url or "", {"status": "rejected", "findings_total": 0})
             return
 
         try:
             for ev in scan_target(url):
                 if ev.get("type") == "done":
-                    nonlocal_summary = ev.get("summary", nonlocal_summary)
+                    final_summary = ev.get("summary", final_summary)
                 yield f"data: {json.dumps(ev)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)[:500]})}\n\n"
+            _persist(url, {"status": "error", "findings_total": 0})
+            yield "event: end\ndata: {}\n\n"
+            return
 
         yield "event: end\ndata: {}\n\n"
-        append_audit_log(
-            url,
-            nonlocal_summary.get("status", "unknown"),
-            nonlocal_summary.get("findings_total", 0),
-        )
+        _persist(url, final_summary)
 
     return StreamingResponse(
         event_gen(),
@@ -158,16 +138,24 @@ def scan_stream(url: str = Query(...), consent: bool = Query(False)):
     )
 
 
+@app.get("/api/history")
+async def history(limit: int = Query(50, ge=1, le=200)):
+    return {"entries": list_scans(limit=limit)}
+
+
+@app.get("/api/scans/{scan_id}")
+async def scan_detail(scan_id: int):
+    scan = get_scan(scan_id)
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    return scan
+
+
+# Legacy alias kept so older frontend builds and the previous API surface
+# do not break after the JSONL→SQLite migration.
 @app.get("/api/audit")
-async def get_audit_log():
-    if not os.path.exists(AUDIT_LOG_PATH):
-        return {"entries": []}
-    try:
-        with open(AUDIT_LOG_PATH, "r", encoding="utf-8") as f:
-            entries = [json.loads(ln) for ln in (l.strip() for l in f) if ln]
-        return {"entries": list(reversed(entries))}
-    except Exception as e:
-        return {"entries": [], "error": str(e)[:200]}
+async def get_audit_log_legacy():
+    return {"entries": list_scans(limit=100)}
 
 
 @app.get("/api/health")

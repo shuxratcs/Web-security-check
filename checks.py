@@ -20,6 +20,8 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 import requests
 import urllib3
 
+from outdated_components_db import detect_components
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 REQUEST_TIMEOUT = 6
@@ -111,12 +113,14 @@ def check_security_headers(url, response):
                                      evidence=f"Header missing: {header}"))
 
     for leaky in ("server", "x-powered-by", "x-aspnet-version", "x-aspnetmvc-version"):
-        if leaky in headers:
-            findings.append(_finding(
-                "low", "Information Disclosure",
-                f"Technology fingerprint leaked via {leaky}",
-                evidence=f"{leaky}: {headers[leaky]}",
-            ))
+        value = (headers.get(leaky) or "").strip()
+        if not value:
+            continue
+        findings.append(_finding(
+            "low", "Information Disclosure",
+            f"Technology fingerprint leaked via {leaky}",
+            evidence=f"{leaky}: {value}",
+        ))
     return findings
 
 
@@ -347,6 +351,27 @@ def check_info_disclosure(url, response):
                 evidence=marker,
             ))
             break
+    return findings
+
+
+def check_outdated_components(url, response):
+    """OWASP A06 — Vulnerable and Outdated Components.
+
+    Fingerprints server software, runtimes, CMS, and JS libraries from
+    response headers and HTML, then flags versions older than the
+    minimums in outdated_components_db.COMPONENT_RULES.
+    """
+    findings = []
+    headers = {k.lower(): v for k, v in response.headers.items()}
+    html = response.text or ""
+    for cid, name, detected, min_safe, rationale in detect_components(headers, html):
+        findings.append(_finding(
+            "high",
+            "Vulnerable / Outdated Component",
+            f"{name} {detected} is older than the minimum safe version {min_safe}",
+            evidence=f"{cid}={detected}; reason={rationale}",
+            remediation_key="Outdated Component",
+        ))
     return findings
 
 

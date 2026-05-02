@@ -26,6 +26,7 @@ from checks import (
     check_cors,
     check_sensitive_files,
     check_info_disclosure,
+    check_outdated_components,
     check_xss_reflected,
 )
 from sqli_scanner import run_sqli_quick
@@ -40,6 +41,7 @@ CHECK_PIPELINE = [
     ("Information Disclosure", check_info_disclosure),
     ("CORS Configuration", check_cors),
     ("Sensitive Files", check_sensitive_files),
+    ("Outdated Components", check_outdated_components),
     ("Reflected XSS", check_xss_reflected),
     ("SQL Injection", run_sqli_quick),
 ]
