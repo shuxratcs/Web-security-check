@@ -100,9 +100,11 @@ def check_security_headers(url, response):
     findings = []
     headers = {k.lower(): v for k, v in response.headers.items()}
 
+    # NOTE: x-frame-options is already checked in check_clickjacking(),
+    # and content-security-policy in check_csp() — not listed here to
+    # avoid double-counting the same missing protection.
     expected = [
-        ("strict-transport-security", "HSTS not set", "high"),
-        ("x-frame-options", "X-Frame-Options not set (clickjacking risk)", "medium"),
+        ("strict-transport-security", "HSTS not set", "medium"),
         ("x-content-type-options", "X-Content-Type-Options not set (MIME-sniffing)", "low"),
         ("referrer-policy", "Referrer-Policy not set", "low"),
         ("permissions-policy", "Permissions-Policy not set", "info"),
@@ -219,7 +221,7 @@ def check_csp(url, response):
            or response.headers.get("Content-Security-Policy-Report-Only"))
     if not csp:
         findings.append(_finding(
-            "medium", "Weak CSP",
+            "low", "Weak CSP",
             "No Content-Security-Policy header set",
             evidence="CSP header absent",
         ))
@@ -227,13 +229,13 @@ def check_csp(url, response):
     lower = csp.lower()
     if "'unsafe-inline'" in lower:
         findings.append(_finding(
-            "medium", "Weak CSP",
+            "low", "Weak CSP",
             "CSP allows 'unsafe-inline' (scripts or styles)",
             evidence=csp[:300],
         ))
     if "'unsafe-eval'" in lower:
         findings.append(_finding(
-            "medium", "Weak CSP",
+            "low", "Weak CSP",
             "CSP allows 'unsafe-eval'",
             evidence=csp[:300],
         ))
@@ -253,7 +255,7 @@ def check_clickjacking(url, response):
         csp = (headers.get("content-security-policy") or "").lower()
         if "frame-ancestors" not in csp:
             return [_finding(
-                "medium", "Clickjacking",
+                "low", "Clickjacking",
                 "No X-Frame-Options or CSP frame-ancestors directive set",
                 evidence="Both protections absent",
             )]
@@ -300,7 +302,13 @@ def _probe_path(base, path):
                          verify=False, allow_redirects=False)
         if r.status_code == 200 and r.content:
             body = r.text[:2000]
-            if any(ind in body for ind in SENSITIVE_FILE_INDICATORS) or len(r.content) > 50:
+            body_lower = body.lower()
+            # Skip custom 404 pages that return HTTP 200
+            if "<html" in body_lower:
+                if "404" in body_lower or "not found" in body_lower or "page not found" in body_lower:
+                    return None
+            # Only flag when we see actual sensitive content indicators
+            if any(ind in body for ind in SENSITIVE_FILE_INDICATORS):
                 return path, len(r.content)
     except Exception:
         return None

@@ -12,6 +12,74 @@ const SEVERITY_LABEL = {
   info: 'INFO',
 }
 
+// Points deducted from the 100-point score per severity level
+const SEVERITY_PENALTY = {
+  critical: 25,
+  high: 15,
+  medium: 5,
+  low: 1,
+  info: 0,
+}
+
+// Plain-language explanations for non-technical users (entrepreneurs)
+const HUMAN_DESCRIPTIONS = {
+  'SQL Injection': {
+    what: 'An attacker could insert malicious database commands through your website\'s forms or URL, potentially stealing all your customer data.',
+    risk: 'Your database (customer names, emails, passwords, payment info) could be fully compromised.',
+    who: 'Any visitor to your website could exploit this without special tools.',
+  },
+  'Reflected XSS': {
+    what: 'An attacker could inject malicious scripts into your website that run in your customers\' browsers.',
+    risk: 'Attackers can steal login sessions, redirect users to phishing sites, or deface your website.',
+    who: 'Attackers trick your users by sending them a specially crafted link to your site.',
+  },
+  'Missing Security Headers': {
+    what: 'Your server is not sending recommended security instructions to visitors\' browsers.',
+    risk: 'Without these headers, browsers cannot enforce important protections for your users.',
+    who: 'This is a hardening recommendation — it makes other attacks easier if missing.',
+  },
+  'Insecure Cookie': {
+    what: 'Your website\'s login cookies are missing important security flags.',
+    risk: 'User sessions could be hijacked over insecure connections or by malicious scripts.',
+    who: 'An attacker on the same WiFi network or a malicious script on your page.',
+  },
+  'Sensitive File Exposure': {
+    what: 'Configuration files, backups, or source code are publicly accessible on your server.',
+    risk: 'These files may contain database passwords, API keys, or other secrets.',
+    who: 'Anyone who knows the common file paths can access these directly.',
+  },
+  'CORS Misconfiguration': {
+    what: 'Your API allows requests from any website, which could let attackers steal data.',
+    risk: 'A malicious website could make requests to your API on behalf of logged-in users.',
+    who: 'An attacker hosting a malicious website that your users visit.',
+  },
+  'Clickjacking': {
+    what: 'Your website can be embedded inside another website using invisible frames.',
+    risk: 'Attackers can trick users into clicking buttons on your site without their knowledge.',
+    who: 'An attacker creates a fake page with your site hidden behind it.',
+  },
+  'Information Disclosure': {
+    what: 'Your server reveals technical details (software versions, emails, error messages) to visitors.',
+    risk: 'Attackers use this information to find known vulnerabilities specific to your software.',
+    who: 'Any visitor can see this information in your page source or HTTP headers.',
+  },
+  'Weak SSL/TLS': {
+    what: 'Your website\'s encryption (HTTPS) is either missing, outdated, or misconfigured.',
+    risk: 'Data transmitted between your users and your server could be intercepted.',
+    who: 'Anyone on the same network (e.g. public WiFi) can intercept unencrypted traffic.',
+  },
+  'Weak CSP': {
+    what: 'Your Content Security Policy is missing or too permissive.',
+    risk: 'Without CSP, browsers cannot block injected malicious scripts on your site.',
+    who: 'Attackers who find any way to inject content into your pages.',
+  },
+  'Vulnerable / Outdated Component': {
+    what: 'Your server or website uses software with known security vulnerabilities.',
+    risk: 'Attackers have pre-built tools to exploit these specific software versions.',
+    who: 'Automated scanners actively search the internet for outdated software.',
+  },
+}
+
 const STATIC_REMEDIATIONS = {
   'SQL Injection':
     'Use parameterised queries / prepared statements for every user-supplied value. Validate inputs (allow-list, length, type). Apply least-privilege DB accounts. Layer a WAF.',
@@ -33,6 +101,10 @@ const STATIC_REMEDIATIONS = {
     'Disable TLS 1.0/1.1; require TLS 1.2+ (prefer 1.3). Use a modern cipher suite. Renew certificates well before expiry; automate via ACME.',
   'Weak CSP':
     'Start from default-src \'self\'. Add only required origins. Avoid \'unsafe-inline\' and \'unsafe-eval\'. Use nonces for legitimate inline scripts.',
+  'Outdated Component':
+    'Update all server software, frameworks, and libraries to the latest stable versions. Subscribe to security advisories for your stack.',
+  'Vulnerable / Outdated Component':
+    'Update all server software, frameworks, and libraries to the latest stable versions. Subscribe to security advisories for your stack.',
 }
 
 function logTypeFromLevel(level) {
@@ -225,6 +297,84 @@ function App() {
     }
   }
 
+  // Generate a downloadable text report
+  function generateReport() {
+    if (!scanResult) return
+    const lines = []
+    lines.push('═══════════════════════════════════════════════════════════════')
+    lines.push('                    SentinelAI Security Report                ')
+    lines.push('═══════════════════════════════════════════════════════════════')
+    lines.push('')
+    lines.push(`Target:         ${targetUrl}`)
+    lines.push(`Date:           ${new Date().toLocaleString()}`)
+    lines.push(`Security Score: ${scanResult.score}/100`)
+    lines.push(`Risk Level:     ${scanResult.risk_level}`)
+    lines.push(`Status:         ${scanResult.status}`)
+    lines.push(`Total Findings: ${scanResult.findings_total ?? scanResult.findings?.length ?? 0}`)
+    lines.push('')
+    lines.push('───────────────────────────────────────────────────────────────')
+    lines.push('  SEVERITY BREAKDOWN')
+    lines.push('───────────────────────────────────────────────────────────────')
+    const c = scanResult.counts || {}
+    lines.push(`  Critical: ${c.critical || 0}   High: ${c.high || 0}   Medium: ${c.medium || 0}   Low: ${c.low || 0}   Info: ${c.info || 0}`)
+    lines.push('')
+
+    if (scanResult.findings && scanResult.findings.length > 0) {
+      lines.push('───────────────────────────────────────────────────────────────')
+      lines.push('  DETAILED FINDINGS')
+      lines.push('───────────────────────────────────────────────────────────────')
+      scanResult.findings.forEach((f, i) => {
+        const sev = (f.severity || 'info').toUpperCase()
+        const penalty = SEVERITY_PENALTY[f.severity || 'info']
+        const desc = HUMAN_DESCRIPTIONS[f.category] || HUMAN_DESCRIPTIONS[f.remediation_key]
+        const remedy = STATIC_REMEDIATIONS[f.remediation_key || f.category]
+        lines.push('')
+        lines.push(`  #${i + 1}  [${sev}]  ${f.category}`)
+        lines.push(`  Issue: ${f.title}`)
+        if (f.evidence) lines.push(`  Evidence: ${f.evidence}`)
+        lines.push(`  Score Impact: -${penalty} points`)
+        if (desc) {
+          lines.push(`  What it means: ${desc.what}`)
+          lines.push(`  Business risk: ${desc.risk}`)
+        }
+        if (remedy) {
+          lines.push(`  How to fix: ${remedy}`)
+        }
+        lines.push('  - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -')
+      })
+    } else {
+      lines.push('')
+      lines.push('  ✓ No vulnerabilities detected. Your site passed all checks.')
+    }
+
+    lines.push('')
+    lines.push('───────────────────────────────────────────────────────────────')
+    lines.push('  RESPONSIBLE DISCLOSURE NOTICE')
+    lines.push('───────────────────────────────────────────────────────────────')
+    lines.push('  If vulnerabilities were found, we recommend:')
+    lines.push('  1. Fix the issues according to the remediation guidance above.')
+    lines.push('  2. If this is not your website, responsibly disclose the')
+    lines.push('     findings to the site owner.')
+    lines.push('  3. Do NOT exploit or publicly share vulnerabilities.')
+    lines.push('')
+    lines.push('  Reference: NCSC Vulnerability Disclosure Toolkit')
+    lines.push('  https://www.ncsc.gov.uk/information/vulnerability-disclosure-toolkit')
+    lines.push('')
+    lines.push('═══════════════════════════════════════════════════════════════')
+    lines.push(`  Generated by SentinelAI ${BUILD_VERSION}`)
+    lines.push('  OWASP Top 10 aligned security scanner')
+    lines.push('═══════════════════════════════════════════════════════════════')
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const hostname = new URL(targetUrl).hostname.replace(/\./g, '_')
+    a.href = url
+    a.download = `SentinelAI_Report_${hostname}_${new Date().toISOString().slice(0,10)}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const score = scanResult?.score ?? 100
   const summaryCounts = scanResult?.counts || { critical: 0, high: 0, medium: 0, low: 0, info: 0 }
 
@@ -377,6 +527,17 @@ function App() {
                 </div>
               </div>
 
+              <div className="report-actions">
+                <button className="download-btn" onClick={generateReport} id="download-report">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                  </svg>
+                  DOWNLOAD FULL REPORT
+                </button>
+              </div>
+
               <div className="severity-bar">
                 {['critical', 'high', 'medium', 'low', 'info'].map((sev) => (
                   <div key={sev} className={`sev-pill sev-${sev}`}>
@@ -389,33 +550,90 @@ function App() {
               {scanResult.findings && scanResult.findings.length > 0 ? (
                 <div className="findings-section">
                   <h3>DETECTION DETAILS</h3>
-                  {scanResult.findings.map((finding, idx) => (
-                    <div key={idx} className={`finding-card sev-border-${finding.severity || 'info'}`}>
-                      <div className="finding-header">
-                        <span className="finding-type">{finding.category}</span>
-                        <span className={`sev-badge sev-${finding.severity || 'info'}`}>
-                          {SEVERITY_LABEL[finding.severity || 'info']}
-                        </span>
+                  <p className="findings-explainer">Each finding shows what was detected, why it matters for your business, and how many points it deducted from your security score.</p>
+                  {scanResult.findings.map((finding, idx) => {
+                    const sev = finding.severity || 'info'
+                    const penalty = SEVERITY_PENALTY[sev]
+                    const humanDesc = HUMAN_DESCRIPTIONS[finding.category] || HUMAN_DESCRIPTIONS[finding.remediation_key]
+                    return (
+                      <div key={idx} className={`finding-card sev-border-${sev}`}>
+                        <div className="finding-header">
+                          <span className="finding-type">{finding.category}</span>
+                          <div className="finding-header-right">
+                            {penalty > 0 && (
+                              <span className="penalty-badge">−{penalty} pts</span>
+                            )}
+                            <span className={`sev-badge sev-${sev}`}>
+                              {SEVERITY_LABEL[sev]}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="finding-body">
+                          {finding.title && <p className="finding-title"><strong>{finding.title}</strong></p>}
+
+                          {humanDesc && (
+                            <div className="finding-explanation">
+                              <div className="explanation-row">
+                                <span className="explanation-icon">💡</span>
+                                <div>
+                                  <span className="explanation-label">What this means:</span>
+                                  <span className="explanation-text">{humanDesc.what}</span>
+                                </div>
+                              </div>
+                              <div className="explanation-row">
+                                <span className="explanation-icon">⚠️</span>
+                                <div>
+                                  <span className="explanation-label">Business risk:</span>
+                                  <span className="explanation-text">{humanDesc.risk}</span>
+                                </div>
+                              </div>
+                              {humanDesc.who && (
+                                <div className="explanation-row">
+                                  <span className="explanation-icon">👤</span>
+                                  <div>
+                                    <span className="explanation-label">Who can exploit it:</span>
+                                    <span className="explanation-text">{humanDesc.who}</span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {finding.evidence && (
+                            <details className="evidence-details">
+                              <summary>Technical evidence</summary>
+                              <p className="finding-evidence"><code className="font-mono">{finding.evidence}</code></p>
+                            </details>
+                          )}
+                          <button className="remedy-btn" onClick={() => setShowRemediation(idx)}>
+                            VIEW FIX INSTRUCTIONS
+                          </button>
+                        </div>
                       </div>
-                      <div className="finding-body">
-                        {finding.title && <p className="finding-title"><strong>{finding.title}</strong></p>}
-                        {finding.evidence && (
-                          <p className="finding-evidence"><code className="font-mono">{finding.evidence}</code></p>
-                        )}
-                        <button className="remedy-btn" onClick={() => setShowRemediation(idx)}>
-                          VIEW REMEDIATION
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               ) : (
                 <div className="findings-section">
-                  <p className="findings-clean">No vulnerabilities detected across the ten OWASP-aligned checks. Continue to monitor and re-scan after deployments.</p>
+                  <p className="findings-clean">✓ No vulnerabilities detected across the ten OWASP-aligned checks. Your website demonstrates strong security practices. Continue to monitor and re-scan after deployments.</p>
                 </div>
               )}
 
-              <button className="reset-btn" onClick={newScan}>NEW SCAN</button>
+              <div className="disclosure-note">
+                <strong>Responsible Disclosure:</strong> If vulnerabilities were found on a website you do not own, we recommend reporting them to the site owner following the <a href="https://www.ncsc.gov.uk/information/vulnerability-disclosure-toolkit" target="_blank" rel="noopener noreferrer">NCSC Vulnerability Disclosure Toolkit</a> guidelines. Do not exploit or publicly share vulnerabilities.
+              </div>
+
+              <div className="results-actions">
+                <button className="download-btn" onClick={generateReport}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                  </svg>
+                  DOWNLOAD REPORT
+                </button>
+                <button className="reset-btn" onClick={newScan}>NEW SCAN</button>
+              </div>
             </div>
           )}
         </main>

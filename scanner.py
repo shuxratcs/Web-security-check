@@ -81,11 +81,13 @@ def _summary(findings, status_override=None):
     else:
         risk, status = "Secure", "Secure"
 
+    # Scoring: start at 100, deduct per severity.
+    # info findings do NOT reduce the score.
     score = 100
     score -= sev_counts["critical"] * 25
-    score -= sev_counts["high"] * 12
-    score -= sev_counts["medium"] * 6
-    score -= sev_counts["low"] * 2
+    score -= sev_counts["high"] * 15
+    score -= sev_counts["medium"] * 5
+    score -= sev_counts["low"] * 1
     score = max(0, score)
 
     return {

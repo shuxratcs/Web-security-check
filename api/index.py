@@ -69,14 +69,14 @@ XSS_PAYLOADS = [
     '<svg onload=alert(1)>',
 ]
 
+# NOTE: X-Frame-Options is checked in check_clickjacking(), and
+# Content-Security-Policy is checked in check_csp(), so they are NOT
+# listed here to avoid double-counting the same missing protection.
 SECURITY_HEADERS_CHECKS = {
-    "X-Frame-Options": {"risk": "High", "desc": "Protects against Clickjacking attacks"},
-    "Content-Security-Policy": {"risk": "High", "desc": "Prevents XSS and code injection"},
-    "Strict-Transport-Security": {"risk": "High", "desc": "Enforces HTTPS (HSTS)"},
-    "X-Content-Type-Options": {"risk": "Medium", "desc": "Prevents MIME-type sniffing"},
+    "Strict-Transport-Security": {"risk": "Medium", "desc": "Enforces HTTPS (HSTS)"},
+    "X-Content-Type-Options": {"risk": "Low", "desc": "Prevents MIME-type sniffing"},
     "Referrer-Policy": {"risk": "Low", "desc": "Controls referrer info leakage"},
-    "Permissions-Policy": {"risk": "Low", "desc": "Controls browser feature access"},
-    "X-XSS-Protection": {"risk": "Low", "desc": "Legacy XSS filter"},
+    "Permissions-Policy": {"risk": "Info", "desc": "Controls browser feature access"},
 }
 
 SENSITIVE_PATHS = [
@@ -204,7 +204,8 @@ def check_security_headers(resp_headers):
     header_keys_lower = {k.lower(): v for k, v in resp_headers.items()}
     for header, info in SECURITY_HEADERS_CHECKS.items():
         if header.lower() not in header_keys_lower:
-            sev = "high" if info["risk"] == "High" else ("medium" if info["risk"] == "Medium" else "low")
+            risk = info["risk"]
+            sev = "medium" if risk == "High" else ("low" if risk in ("Medium", "Low") else "info")
             findings.append(_finding(sev, "Missing Security Headers", f"{header} not set", f"Header missing: {header}"))
     return findings
 
@@ -293,7 +294,7 @@ def check_clickjacking(resp_headers):
     xfo = resp_headers.get("X-Frame-Options", resp_headers.get("x-frame-options", "")).lower()
     csp = resp_headers.get("Content-Security-Policy", resp_headers.get("content-security-policy", "")).lower()
     if not xfo and "frame-ancestors" not in csp:
-        findings.append(_finding("medium", "Clickjacking", "No X-Frame-Options or CSP frame-ancestors"))
+        findings.append(_finding("low", "Clickjacking", "No X-Frame-Options or CSP frame-ancestors"))
     return findings
 
 
@@ -301,11 +302,11 @@ def check_csp(resp_headers):
     findings = []
     csp = resp_headers.get("Content-Security-Policy", resp_headers.get("content-security-policy", ""))
     if not csp:
-        findings.append(_finding("medium", "Weak CSP", "No Content-Security-Policy header"))
+        findings.append(_finding("low", "Weak CSP", "No Content-Security-Policy header"))
         return findings
     for weakness, desc in CSP_WEAKNESSES.items():
         if weakness in csp.lower():
-            findings.append(_finding("medium", "Weak CSP", f"CSP contains {weakness}", desc))
+            findings.append(_finding("low", "Weak CSP", f"CSP contains {weakness}", desc))
     return findings
 
 
@@ -324,19 +325,46 @@ def check_outdated_components(resp_headers, body):
 
 
 def check_sensitive_paths(base_url):
+    """Check for sensitive file exposure.
+
+    We require strong positive indicators (e.g. DB_PASSWORD, ref: refs/heads)
+    inside the response body to reduce false positives from custom 404 pages
+    or generic HTML responses.
+    """
+    SENSITIVE_INDICATORS = (
+        "DB_PASSWORD", "DB_USERNAME", "AWS_ACCESS_KEY", "AWS_SECRET",
+        "ref: refs/heads", "[mysql]", "BEGIN RSA PRIVATE KEY",
+        "BEGIN PRIVATE KEY", "<?php", "phpinfo()",
+    )
     findings = []
     parsed = urlparse(base_url)
     origin = f"{parsed.scheme}://{parsed.hostname}"
     if parsed.port and parsed.port not in (80, 443):
         origin += f":{parsed.port}"
     for path, risk, desc in SENSITIVE_PATHS:
+        # robots.txt and sitemap.xml are public-by-design — informational only
+        if path in ("/robots.txt", "/sitemap.xml"):
+            test_url = origin + path
+            try:
+                st, body, _ = http_get(test_url, timeout=3)
+                if st == 200 and len(body) > 0:
+                    findings.append(_finding("info", "Sensitive File Exposure", f"Accessible: {path}", f"GET {path} → 200"))
+            except Exception:
+                pass
+            continue
+
         test_url = origin + path
         try:
             st, body, _ = http_get(test_url, timeout=3)
-            if st == 200 and len(body) > 0:
-                if "<html" in body.lower() and path not in ("/robots.txt", "/sitemap.xml"):
-                    if "404" in body.lower() or "not found" in body.lower():
-                        continue
+            if st != 200 or len(body) == 0:
+                continue
+            # Skip custom 404 pages disguised as 200
+            body_lower = body.lower()
+            if "<html" in body_lower:
+                if "404" in body_lower or "not found" in body_lower or "page not found" in body_lower:
+                    continue
+            # Only flag as real exposure if we see known sensitive indicators
+            if any(ind in body for ind in SENSITIVE_INDICATORS):
                 sev = "critical" if risk == "Critical" else ("high" if risk == "High" else "info")
                 findings.append(_finding(sev, "Sensitive File Exposure", f"Accessible: {path}", f"GET {path} → 200"))
         except Exception:
@@ -367,11 +395,14 @@ def _summary(findings, status_override=None):
         risk, status = "Low", "Hardenable"
     else:
         risk, status = "Secure", "Secure"
+
+    # Scoring: start at 100, deduct per severity.
+    # info findings do NOT reduce the score.
     score = 100
     score -= sev_counts["critical"] * 25
-    score -= sev_counts["high"] * 12
-    score -= sev_counts["medium"] * 6
-    score -= sev_counts["low"] * 2
+    score -= sev_counts["high"] * 15
+    score -= sev_counts["medium"] * 5
+    score -= sev_counts["low"] * 1
     score = max(0, score)
     return {
         "status": status, "risk_level": risk, "score": score,

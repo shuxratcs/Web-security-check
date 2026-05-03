@@ -557,6 +557,170 @@
   line-height: 1.5;
 }
 
+/* Download Report Button */
+.report-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 1rem;
+}
+
+.download-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 1.5rem;
+  background: transparent;
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.download-btn:hover {
+  background: var(--color-primary);
+  color: #000;
+  box-shadow: 0 0 15px var(--color-primary-dim);
+  transform: translateY(-2px);
+}
+
+/* Penalty badge in finding header */
+.finding-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.penalty-badge {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-danger);
+  background: rgba(255, 23, 68, 0.1);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 23, 68, 0.3);
+}
+
+/* Findings explainer text */
+.findings-explainer {
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  margin-bottom: 1.5rem;
+  line-height: 1.5;
+}
+
+/* Human-readable finding explanation */
+.finding-explanation {
+  background: rgba(0, 229, 255, 0.03);
+  border: 1px solid rgba(0, 229, 255, 0.1);
+  border-radius: 8px;
+  padding: 1rem;
+  margin: 0.75rem 0 1rem;
+}
+
+.explanation-row {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+  align-items: flex-start;
+}
+
+.explanation-row:last-child {
+  margin-bottom: 0;
+}
+
+.explanation-icon {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.explanation-label {
+  font-weight: 700;
+  color: var(--color-primary);
+  font-size: 0.8rem;
+  display: block;
+  margin-bottom: 0.15rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.explanation-text {
+  font-size: 0.88rem;
+  color: var(--color-text);
+  line-height: 1.5;
+  display: block;
+}
+
+/* Technical evidence toggle */
+.evidence-details {
+  margin: 0.75rem 0;
+}
+
+.evidence-details summary {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0.35rem 0;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: color 0.2s;
+}
+
+.evidence-details summary:hover {
+  color: var(--color-primary);
+}
+
+.evidence-details[open] summary {
+  color: var(--color-primary);
+  margin-bottom: 0.5rem;
+}
+
+/* Responsible Disclosure Note */
+.disclosure-note {
+  margin-top: 2rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid rgba(0, 229, 255, 0.2);
+  border-left-width: 4px;
+  border-left-color: var(--color-primary);
+  border-radius: 6px;
+  background: rgba(0, 229, 255, 0.03);
+  color: var(--color-text);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.disclosure-note strong {
+  color: var(--color-primary);
+  margin-right: 0.3rem;
+}
+
+.disclosure-note a {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+/* Results actions row */
+.results-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 2rem;
+  align-items: center;
+}
+
+.results-actions .download-btn {
+  flex-shrink: 0;
+}
+
+.results-actions .reset-btn {
+  margin-top: 0;
+}
+
 @media (max-width: 1024px) {
   .sidebar { display: none; }
   .app-container { padding: 2rem; }
@@ -568,6 +732,9 @@
   .scan-button { width: 100%; }
   .progress-pill { display: none; }
   .legal-banner { font-size: 0.78rem; }
+  .results-actions { flex-direction: column; }
+  .finding-header { flex-direction: column; gap: 0.5rem; align-items: flex-start; }
+  .finding-header-right { align-self: flex-end; }
 }
 
 /* Legal disclaimer banner — Computer Misuse Act 1990 reference */
